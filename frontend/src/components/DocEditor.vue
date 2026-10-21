@@ -10,6 +10,9 @@ import { CodeBlockWithWidgets, INTAGED_LANGUAGE } from '../editor/CodeBlockWithW
 const props = defineProps<{ name: string }>()
 
 const SAVE_DELAY_MS = 800
+// Keep the caret this far from the viewport's bottom edge while typing.
+const CARET_BOTTOM_MARGIN_PX = 200
+const caretScroll = { top: 5, left: 5, right: 5, bottom: CARET_BOTTOM_MARGIN_PX }
 
 const saveState = ref<'saved' | 'saving' | 'dirty' | 'error'>('saved')
 const loadError = ref<string | null>(null)
@@ -22,7 +25,10 @@ const editor = useEditor({
     Markdown,
   ],
   editorProps: {
-    attributes: { class: 'prose prose-sm sm:prose-base max-w-none min-h-[60vh] py-6 focus:outline-none' },
+    // pb-[50vh]: lets the document scroll past its last line.
+    attributes: { class: 'prose prose-sm sm:prose-base max-w-none pt-6 pb-[50vh] focus:outline-none' },
+    scrollMargin: caretScroll,
+    scrollThreshold: caretScroll,
   },
   onUpdate: () => {
     saveState.value = 'dirty'
