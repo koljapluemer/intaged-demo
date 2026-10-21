@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NodeViewContent, NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
 import { RefreshCw, TriangleAlert, WandSparkles } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { INTAGED_LANGUAGE } from './CodeBlockWithWidgets'
 import { useWidget } from './useWidget'
 import WidgetFrame from './WidgetFrame.vue'
@@ -23,6 +23,14 @@ function slot(): string {
 
 const { code, status, busy, stale, requestError, runtimeErrors, renderId, generate, reportError } =
   useWidget(spec, isWidget, slot)
+
+type View = 'spec' | 'render' | 'both'
+const tabs: { value: View; label: string }[] = [
+  { value: 'spec', label: 'Spec' },
+  { value: 'render', label: 'Rendered' },
+  { value: 'both', label: 'Both' },
+]
+const view = ref<View>('both')
 </script>
 
 <template>
@@ -34,6 +42,21 @@ const { code, status, busy, stale, requestError, runtimeErrors, renderId, genera
       class="flex items-center gap-2 border-b border-base-300 px-3 py-1"
     >
       <span class="badge badge-primary badge-sm">intaged</span>
+      <div
+        role="tablist"
+        class="tabs tabs-box tabs-xs"
+      >
+        <button
+          v-for="t in tabs"
+          :key="t.value"
+          role="tab"
+          class="tab"
+          :class="{ 'tab-active': view === t.value }"
+          @click="view = t.value"
+        >
+          {{ t.label }}
+        </button>
+      </div>
       <span class="flex-1 truncate text-sm opacity-70">{{ code?.title }}</span>
       <span
         v-if="busy"
@@ -64,18 +87,23 @@ const { code, status, busy, stale, requestError, runtimeErrors, renderId, genera
       </button>
     </div>
 
-    <pre :class="{ 'm-0 bg-transparent px-3 py-2 font-mono text-sm whitespace-pre-wrap text-base-content/80': isWidget }"><NodeViewContent as="code" /></pre>
+    <pre
+      v-show="!isWidget || view !== 'render'"
+      :class="{ 'm-0 bg-transparent px-3 py-2 font-mono text-sm whitespace-pre-wrap text-base-content/80': isWidget }"
+    ><NodeViewContent as="code" /></pre>
 
     <div
       v-if="isWidget"
+      v-show="view !== 'spec'"
       contenteditable="false"
-      class="flex flex-col gap-2 border-t border-base-300 p-2"
+      class="flex flex-col gap-2 border-base-300 p-2"
+      :class="{ 'border-t': view === 'both' }"
     >
       <WidgetFrame
         v-if="code"
         :key="renderId"
         :code="code"
-        :class="{ 'opacity-40': stale || busy }"
+        :class="{ 'opacity-40': busy }"
         @error="reportError"
       />
       <div
