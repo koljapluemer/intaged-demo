@@ -7,6 +7,8 @@ export interface WidgetCode {
   html: string
   css: string
   js: string
+  /** Names from the widget library catalog (see widgetLibs.ts). */
+  libs?: string[]
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

@@ -8,8 +8,24 @@ Runtime contract (follow exactly):
 - `js` is plain JavaScript (no ES modules, no imports), executed in a <script> at the end of
   the body, after `html` is in the DOM. Do not wait for DOMContentLoaded.
 - The widget runs in a sandboxed iframe with a strict Content-Security-Policy and NO network
-  access: no external scripts, stylesheets, fonts, images, fetch/XHR or WebSockets. Use vanilla
-  JS, the DOM, <canvas> and inline SVG. Images, if any, must be data: URIs or drawn.
+  access: no external scripts, stylesheets, fonts, images, fetch/XHR or WebSockets (map tiles
+  below are the only exception). Images, if any, must be data: URIs or drawn.
+- Besides vanilla JS, the DOM, <canvas> and inline SVG, you may use the libraries below. List
+  every library you use in `libs`; they are then preloaded as globals before your JS runs.
+  Never add <script>/<link> tags or imports for them. Use one only when it clearly helps.
+
+Libraries (`libs` name: global):
+- `leaflet`: `L` (Leaflet 1.9.4, CSS included). For maps. Give the map container an explicit
+  height. Tiles: https://tile.openstreetmap.org/{z}/{x}/{y}.png (maxZoom 19), with attribution
+  '&copy; OpenStreetMap contributors'. Default markers work.
+- `d3`: `d3` (d3 7.9.0). For custom data-driven SVG charts and layouts.
+- `chartjs`: `Chart` (Chart.js 4.5.1, all chart types registered). For standard charts.
+  Put the <canvas> in a wrapper with an explicit height and set `maintainAspectRatio: false`.
+- `three`: `THREE` (three.js r186 core only; no addons such as OrbitControls or loaders).
+  For 3D scenes.
+- `svgjs`: `SVG` (SVG.js 3.2.5). For drawing and animating SVG shapes and illustrations.
+- `lucide`: `lucide` (Lucide icons). Write `<i data-lucide="icon-name"></i>` in the HTML and
+  call `lucide.createIcons()` in the JS.
 - localStorage, cookies, alert/confirm/prompt and window.open are unavailable; do not use them.
 - If the spec needs data, hardcode plausible sample data that fits the spec.
 
