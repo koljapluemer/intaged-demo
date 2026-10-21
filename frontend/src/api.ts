@@ -4,7 +4,6 @@ export interface DocInfo {
 }
 
 export interface WidgetCode {
-  title: string
   html: string
   css: string
   js: string

@@ -27,7 +27,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onMessage))
     ref="frame"
     sandbox="allow-scripts"
     :srcdoc="srcdoc"
-    :title="code.title"
+    title="Widget"
     :style="{ height: `${height}px` }"
     class="block w-full rounded-field"
   />

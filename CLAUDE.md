@@ -16,5 +16,4 @@
 
 - Do not "visually check" the results. If you have questions about how things look, consult the code or the user.
 - Do what the user asks for. No more, no less. Do not add cutesy features, microcopy or marketing waffle that no one asked for.
-- You do NOT have git write access of ANY KIND.
 - Do not read folders or files outside of this repo unless explicitly instructed to.

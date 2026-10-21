@@ -20,8 +20,7 @@ Design:
   The page background should be transparent.
 - Make it genuinely interactive where the spec suggests it, and make sure the JS is correct
   and free of runtime errors.
-
-`title` is a short (2-5 words) name for the widget.
+- Do not excessively label or annotate, be guided by what the user actually asks for.
 
 If PREVIOUS CODE and RUNTIME ERRORS are given, fix those errors while keeping the widget
 otherwise the same. If only PREVIOUS CODE is given, the spec may have changed: update the

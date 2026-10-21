@@ -57,7 +57,7 @@ const view = ref<View>('both')
           {{ t.label }}
         </button>
       </div>
-      <span class="flex-1 truncate text-sm opacity-70">{{ code?.title }}</span>
+      <div class="flex-1" />
       <span
         v-if="busy"
         class="text-xs opacity-60"

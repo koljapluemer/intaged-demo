@@ -14,7 +14,6 @@ client = OpenAI(timeout=180)
 
 
 class Widget(BaseModel):
-    title: str
     html: str
     css: str
     js: str
