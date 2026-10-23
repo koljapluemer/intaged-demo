@@ -1,5 +1,5 @@
-import { RangeSetBuilder, StateEffect } from '@codemirror/state'
-import { Decoration, EditorView, ViewPlugin, ViewUpdate, WidgetType, type DecorationSet } from '@codemirror/view'
+import { RangeSetBuilder, StateEffect, StateField, type EditorState } from '@codemirror/state'
+import { Decoration, EditorView, WidgetType } from '@codemirror/view'
 import { createApp, h, type App } from 'vue'
 import WidgetCard from '../components/WidgetCard.vue'
 import { findWidgetBlocks, type WidgetBlock } from '../widgetBlocks'
@@ -60,35 +60,27 @@ class WidgetCardWidget extends WidgetType {
   }
 }
 
-function buildDecorations(view: EditorView, options: WidgetOptions) {
+function buildDecorations(state: EditorState, options: WidgetOptions) {
   const builder = new RangeSetBuilder<Decoration>()
-  for (const block of findWidgetBlocks(view.state.doc.toString())) {
+  for (const block of findWidgetBlocks(state.doc.toString())) {
     const revision = block.blockId ? options.getRevision(block.blockId) : undefined
     const artifact = revision ? options.getArtifact(revision) : null
     const widget = new WidgetCardWidget(block, options, revision, artifact)
-    const selection = view.state.selection.main
-    const focused = selection.from <= block.to && selection.to >= block.from
-    if (focused) builder.add(block.to, block.to, Decoration.widget({ widget, block: true, side: 1 }))
-    else builder.add(block.from, block.to, Decoration.replace({ widget, block: true }))
+    builder.add(block.to, block.to, Decoration.widget({ widget, block: true, side: 1 }))
   }
   return builder.finish()
 }
 
 export function widgetDecorations(options: WidgetOptions) {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet
-
-      constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, options)
-      }
-
-      update(update: ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(refreshWidgets)))) {
-          this.decorations = buildDecorations(update.view, options)
-        }
-      }
+  const field = StateField.define({
+    create(state) {
+      return buildDecorations(state, options)
     },
-    { decorations: (value) => value.decorations },
-  )
+    update(decorations, transaction) {
+      const refresh = transaction.effects.some((effect) => effect.is(refreshWidgets))
+      return transaction.docChanged || refresh ? buildDecorations(transaction.state, options) : decorations
+    },
+    provide: (value) => EditorView.decorations.from(value),
+  })
+  return field
 }
