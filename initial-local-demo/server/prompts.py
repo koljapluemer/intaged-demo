@@ -37,6 +37,7 @@ Design:
 - Make it genuinely interactive where the spec suggests it, and make sure the JS is correct
   and free of runtime errors.
 - Do not excessively label or annotate, be guided by what the user actually asks for.
+- Do not add a title nor a subtitle.
 
 If PREVIOUS CODE and RUNTIME ERRORS are given, fix those errors while keeping the widget
 otherwise the same. If only PREVIOUS CODE is given, the spec may have changed: update the
