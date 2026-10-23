@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-server/
+public/vendor/
+.env
+.env.production
+data/
+coverage/
+*.log

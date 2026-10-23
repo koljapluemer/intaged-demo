@@ -1,0 +1,17 @@
+{
+  email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy same-origin
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+  reverse_proxy theadoc:3000
+}
+
+{$SYNC_DOMAIN} {
+  reverse_proxy theadoc:3030
+}
