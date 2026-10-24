@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findWidgetBlocks, withBlockId } from './widgetBlocks'
+import { findWidgetBlocks, splitWidgetBlocks, withBlockId } from './widgetBlocks'
 
 describe('widget blocks', () => {
   it('parses widget specifications and IDs', () => {
@@ -17,5 +17,16 @@ describe('widget blocks', () => {
     expect(withBlockId(markdown, block, '123e4567-e89b-12d3-a456-426614174000')).toContain(
       '```intaged id=123e4567-e89b-12d3-a456-426614174000',
     )
+  })
+})
+
+describe('widget segments', () => {
+  it('splits Markdown around widget blocks', () => {
+    const markdown = 'Intro\n\n```intaged\nA map.\n```\n\nOutro\n'
+    expect(splitWidgetBlocks(markdown)).toMatchObject([
+      { kind: 'markdown', text: 'Intro\n\n' },
+      { kind: 'widget', block: { spec: 'A map.' } },
+      { kind: 'markdown', text: '\n\nOutro\n' },
+    ])
   })
 })

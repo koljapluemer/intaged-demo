@@ -48,6 +48,44 @@ body {
   font-weight: 650;
 }
 
+.cm-line.cm-widget-spec {
+  background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+}
+
+.cm-line.cm-widget-spec-first {
+  border-top-left-radius: var(--radius-field);
+}
+
+/* Tabs sit on the box's top edge; the active one shares the box background. */
+.cm-widget-head {
+  position: relative;
+  margin-top: 0.5rem;
+}
+
+.cm-widget-tab {
+  padding: 0.125rem 0.625rem;
+  border-top-left-radius: var(--radius-field);
+  border-top-right-radius: var(--radius-field);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.cm-widget-tab:hover {
+  opacity: 1;
+}
+
+.cm-widget-tab-active {
+  background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+  opacity: 1;
+}
+
+.cm-line.cm-widget-spec-last {
+  border-bottom-left-radius: var(--radius-field);
+  border-bottom-right-radius: var(--radius-field);
+}
+
 .cm-widget-shell {
-  margin: 0.75rem 0;
+  margin: 0.25rem 0 0.75rem;
 }

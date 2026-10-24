@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { DocHandle } from '@automerge/automerge-repo'
-import { Check, Copy, Download, Menu } from '@lucide/vue'
+import { BookOpen, Check, Copy, Download, Menu, PencilLine } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { titleFromMarkdown } from '../document'
 import { downloadBundle } from '../exportBundle'
 import type { TheadocDocument } from '../types'
+import DocumentReader from './DocumentReader.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: string }>()
@@ -13,6 +14,7 @@ const document = ref(props.handle.doc())
 const copied = ref(false)
 const exporting = ref(false)
 const exportError = ref<string | null>(null)
+const reading = ref(false)
 const title = computed(() => titleFromMarkdown(document.value.markdown))
 
 const onChange = () => {
@@ -53,6 +55,21 @@ async function exportDocument() {
       </h1>
       <button
         class="btn btn-ghost btn-sm"
+        :title="reading ? 'Edit document' : 'Read document'"
+        @click="reading = !reading"
+      >
+        <PencilLine
+          v-if="reading"
+          :size="16"
+        />
+        <BookOpen
+          v-else
+          :size="16"
+        />
+        <span class="hidden sm:inline">{{ reading ? 'Edit' : 'Read' }}</span>
+      </button>
+      <button
+        class="btn btn-ghost btn-sm"
         title="Copy edit link"
         @click="copyLink"
       >
@@ -90,7 +107,13 @@ async function exportDocument() {
     >
       {{ exportError }}
     </div>
+    <DocumentReader
+      v-if="reading"
+      :document="document"
+      class="min-h-0 flex-1"
+    />
     <MarkdownEditor
+      v-else
       :handle="handle"
       :document-id="documentId"
       class="min-h-0 flex-1"

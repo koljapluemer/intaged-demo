@@ -6,16 +6,16 @@ import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { getWidget } from '../api'
 import { selectRevision } from '../document'
 import { markdownPreview } from '../editor/markdownPreview'
 import { refreshWidgets, widgetDecorations } from '../editor/widgetDecorations'
 import { findWidgetBlocks, withBlockId, type WidgetBlock } from '../widgetBlocks'
 import type { TheadocDocument, WidgetArtifact } from '../types'
+import { cachedArtifact, loadArtifact, storeArtifact } from '../widgetArtifacts'
+import { runGeneration } from '../widgetGeneration'
 
 const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: string }>()
 const root = ref<HTMLDivElement>()
-const artifacts = new Map<string, WidgetArtifact | null>()
 let view: EditorView | undefined
 
 function selectedRevision(blockId: string) {
@@ -23,18 +23,13 @@ function selectedRevision(blockId: string) {
 }
 
 function artifact(revision: string) {
-  if (!artifacts.has(revision)) {
-    artifacts.set(revision, null)
-    void getWidget(revision).then((value) => {
-      artifacts.set(revision, value)
-      view?.dispatch({ effects: refreshWidgets.of() })
-    })
-  }
-  return artifacts.get(revision)
+  const value = cachedArtifact(revision)
+  if (value === undefined) void loadArtifact(revision).then(() => view?.dispatch({ effects: refreshWidgets.of() }))
+  return value ?? null
 }
 
 function generated(blockId: string, value: WidgetArtifact) {
-  artifacts.set(value.id, value)
+  storeArtifact(value)
   selectRevision(props.handle, blockId, value.id)
   view?.dispatch({ effects: refreshWidgets.of() })
 }
@@ -43,6 +38,14 @@ function addId(block: WidgetBlock, blockId: string) {
   if (!view) return
   const next = withBlockId(view.state.doc.toString(), block, blockId)
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })
+}
+
+function generate(block: WidgetBlock, errors?: string[]) {
+  if (!block.spec) return
+  const blockId = block.blockId ?? crypto.randomUUID()
+  if (!block.blockId) addId(block, blockId)
+  const previousRevision = block.blockId ? selectedRevision(block.blockId) : undefined
+  void runGeneration({ documentId: props.documentId, blockId, spec: block.spec, previousRevision, errors }, (value) => generated(blockId, value))
 }
 
 function wrap(prefix: string, suffix = prefix) {
@@ -69,8 +72,10 @@ function insertWidget() {
   if (!view) return
   const id = crypto.randomUUID()
   const position = view.state.selection.main.from
-  const value = `\n\`\`\`intaged id=${id}\nDescribe the widget.\n\`\`\`\n`
-  view.dispatch({ changes: { from: position, insert: value }, selection: { anchor: position + value.indexOf('Describe') } })
+  const placeholder = 'Describe the interactive element.'
+  const value = `\n\`\`\`intaged id=${id}\n${placeholder}\n\`\`\`\n`
+  const anchor = position + value.indexOf(placeholder)
+  view.dispatch({ changes: { from: position, insert: value }, selection: { anchor, head: anchor + placeholder.length } })
   view.focus()
 }
 
@@ -87,11 +92,9 @@ onMounted(() => {
         automergeSyncPlugin({ handle: props.handle, path: ['markdown'] }),
         markdownPreview,
         widgetDecorations({
-          documentId: props.documentId,
           getRevision: selectedRevision,
           getArtifact: artifact,
-          onGenerated: generated,
-          onNeedsId: addId,
+          onGenerate: generate,
         }),
       ],
     }),
@@ -140,12 +143,12 @@ defineExpose({ insertWidget })
       >
         • List
       </button>
-      <div class="flex-1" />
       <button
-        class="btn btn-primary btn-sm"
+        class="btn btn-ghost btn-sm"
+        title="Insert interactive element"
         @click="insertWidget"
       >
-        Widget
+        Interactive Element
       </button>
     </div>
     <div class="flex-1 overflow-y-auto">

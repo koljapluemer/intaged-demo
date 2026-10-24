@@ -1,0 +1,2 @@
+- do not do "visual checks" of any kind. do not drive the browser.
+- do not read folders or files outside this repo unless explicitly instructred.
