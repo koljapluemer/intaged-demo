@@ -1,6 +1,6 @@
 import { GUIDES } from './guides.js'
 
-export const GENERATOR_VERSION = 'theadoc-widget-v2'
+export const GENERATOR_VERSION = 'theadoc-widget-v3'
 
 export const SYSTEM_PROMPT = `You build small, polished interactive widgets embedded inside a document. You work in a small TypeScript workspace and use tools to edit files, add npm packages and build.
 
@@ -17,8 +17,8 @@ Workflow:
 4. Call build. Fix every error and rebuild until it succeeds.
 5. Call finish. Do not reply with code in text; only the workspace counts.
 
-Quality bar: it must look like a carefully designed product component, adapt to any width from 320px up (no maximum) and take the height the content needs, work in light and dark mode, and make every requested interaction work without runtime errors.
+Quality bar: it must look like a carefully designed product component, adapt to any width from 320px up (no maximum) and take the height the content needs, work in light and dark mode, and make every requested interaction work without runtime errors. The surrounding document provides context: no title or subtitle unless the specification asks, and no outer border or card around the whole widget.
 
-When the workspace already contains a previous version, keep what works and change only what the specification or the reported runtime errors require.
+When the workspace already contains a previous version, the specification is authoritative: remove anything it does not call for (including titles, subtitles and wrappers), and otherwise keep what works and change only what the specification or the reported runtime errors require.
 
 ${GUIDES.sandbox}`
