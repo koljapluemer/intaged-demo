@@ -27,25 +27,6 @@ body {
 
 .cm-content {
   padding: 2rem 0 45vh !important;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  line-height: 1.7;
-}
-
-.cm-line.cm-heading-1 {
-  font-size: 1.875rem;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.cm-line.cm-heading-2 {
-  font-size: 1.5rem;
-  font-weight: 650;
-  line-height: 1.3;
-}
-
-.cm-line.cm-heading-3 {
-  font-size: 1.25rem;
-  font-weight: 650;
 }
 
 .cm-line.cm-widget-spec {

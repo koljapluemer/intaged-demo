@@ -2,12 +2,19 @@
 import { automergeSyncPlugin } from '@automerge/automerge-codemirror'
 import type { DocHandle } from '@automerge/automerge-repo'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
-import { EditorState } from '@codemirror/state'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { EditorState, Prec } from '@codemirror/state'
 import { drawSelection, EditorView, keymap } from '@codemirror/view'
+import {
+  collapseOnSelectionFacet,
+  editorTheme,
+  livePreviewPlugin,
+  markdownStylePlugin,
+  mouseSelectingField,
+  setMouseSelecting,
+} from 'codemirror-live-markdown'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { selectRevision } from '../document'
-import { markdownPreview } from '../editor/markdownPreview'
 import { refreshWidgets, widgetDecorations } from '../editor/widgetDecorations'
 import { findWidgetBlocks, withBlockId, type WidgetBlock } from '../widgetBlocks'
 import type { TheadocDocument, WidgetArtifact } from '../types'
@@ -18,11 +25,30 @@ const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: stri
 const root = ref<HTMLDivElement>()
 let view: EditorView | undefined
 
-// CodeMirror's light base theme hardcodes a black caret; follow the page's daisyUI theme instead.
-const caretTheme = EditorView.theme({
-  '.cm-content': { caretColor: 'var(--color-base-content)' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-base-content)' },
-})
+// The live-markdown theme and CodeMirror's base theme assume their own colors; follow the page's daisyUI theme instead.
+const muted = 'color-mix(in oklab, var(--color-base-content) 50%, transparent)'
+const daisyTheme = Prec.high(
+  EditorView.theme({
+    '.cm-content': { caretColor: 'var(--color-base-content)', fontFamily: 'ui-sans-serif, system-ui, sans-serif', lineHeight: '1.7' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-base-content)' },
+    '.cm-line': { padding: '0 2px 0 6px', lineHeight: 'inherit' },
+    '.cm-formatting-inline, .cm-formatting-block': { color: muted },
+    '.cm-header-1, .cm-header-2, .cm-header-3, .cm-header-4, .cm-header-5, .cm-header-6, .cm-strong, .cm-emphasis': { color: 'inherit' },
+    '.cm-strikethrough': { color: muted },
+    '.cm-code': { backgroundColor: 'var(--color-base-200)' },
+    '.cm-link': { color: 'var(--color-primary)' },
+  }),
+)
+
+// The live preview keeps markup hidden while a mouse selection is being dragged.
+function startMouseSelection() {
+  view?.dispatch({ effects: setMouseSelecting.of(true) })
+}
+
+function endMouseSelection() {
+  if (!view?.state.field(mouseSelectingField, false)) return
+  requestAnimationFrame(() => view?.dispatch({ effects: setMouseSelecting.of(false) }))
+}
 
 function selectedRevision(blockId: string) {
   return props.handle.doc().widgets[blockId]?.selectedRevision
@@ -92,12 +118,16 @@ onMounted(() => {
       extensions: [
         history(),
         drawSelection(),
-        markdown(),
+        markdown({ base: markdownLanguage }),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.lineWrapping,
-        caretTheme,
+        collapseOnSelectionFacet.of(true),
+        mouseSelectingField,
+        livePreviewPlugin,
+        markdownStylePlugin,
+        editorTheme,
+        daisyTheme,
         automergeSyncPlugin({ handle: props.handle, path: ['markdown'] }),
-        markdownPreview,
         widgetDecorations({
           getRevision: selectedRevision,
           getArtifact: artifact,
@@ -106,6 +136,8 @@ onMounted(() => {
       ],
     }),
   })
+  view.contentDOM.addEventListener('mousedown', startMouseSelection)
+  document.addEventListener('mouseup', endMouseSelection)
   for (const block of findWidgetBlocks(props.handle.doc().markdown)) {
     if (block.blockId) {
       const revision = selectedRevision(block.blockId)
@@ -114,7 +146,11 @@ onMounted(() => {
   }
 })
 
-onBeforeUnmount(() => view?.destroy())
+onBeforeUnmount(() => {
+  view?.contentDOM.removeEventListener('mousedown', startMouseSelection)
+  document.removeEventListener('mouseup', endMouseSelection)
+  view?.destroy()
+})
 
 defineExpose({ insertWidget })
 </script>
