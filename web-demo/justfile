@@ -4,6 +4,14 @@ up:
     mkdir -p data
     docker compose up -d --build --remove-orphans
 
+# Start the stack locally, whatever domains .env holds, and wait until the app is healthy.
+dev:
+    test -f .env || { echo "missing .env: cp .env.example .env" >&2; exit 1; }
+    mkdir -p data
+    APP_DOMAIN=http://localhost SYNC_DOMAIN=http://sync.localhost VITE_SYNC_URL=ws://sync.localhost ACME_EMAIL=dev@localhost \
+        docker compose up -d --build --remove-orphans --wait
+    @echo "app running at http://localhost"
+
 down:
     docker compose down --remove-orphans
 
