@@ -6,7 +6,4 @@ import wasm from 'vite-plugin-wasm'
 export default defineConfig({
   plugins: [wasm(), vue(), tailwindcss()],
   build: { target: 'esnext' },
-  server: {
-    proxy: { '/api': 'http://127.0.0.1:3000' },
-  },
 })

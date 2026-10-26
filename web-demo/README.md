@@ -2,44 +2,22 @@
 
 Collaborative Markdown documents with AI-generated interactive widgets. Documents sync through Automerge, remain available offline in IndexedDB, and are shared through unguessable edit links.
 
-## Run locally with Docker
+## Run
 
-Requirements: Docker Engine with the Compose plugin.
+Requirements: Docker Engine with the Compose plugin, and `just`.
+
+Local development and production run the same `compose.yaml` (app plus Caddy). Only `.env` differs:
 
 ```sh
 cp .env.example .env
 # Add a capped OPENROUTER_API_KEY to .env.
-docker compose --env-file .env -f compose.local.yaml up --build
+just up      # build and (re)start in the background
+just logs    # follow logs
+just down    # stop and remove containers; data/ is kept
+just check   # lint and test inside the Docker build
 ```
 
-Open http://localhost:3000. The Automerge WebSocket server is exposed on `localhost:3030`, and persistent data is written to `./data`.
-
-Stop the app with `Ctrl-C`, then remove the containers without deleting data:
-
-```sh
-docker compose --env-file .env -f compose.local.yaml down
-```
-
-## Native development
-
-Requirements: Node.js 24 and npm.
-
-```sh
-cp .env.example .env
-# Add an OPENROUTER_API_KEY to .env.
-npm install
-npm run dev
-```
-
-The development UI runs at http://localhost:5173, the API at `:3000`, and Automerge sync at `:3030`.
-
-Checks:
-
-```sh
-npm run lint:fix
-npm test
-npm run build
-```
+Locally, the defaults in `.env.example` serve the app at http://localhost and sync at `ws://sync.localhost`, both through Caddy on port 80. Persistent data is written to `./data`.
 
 ## OpenRouter budget
 
@@ -80,15 +58,15 @@ Add AAAA records only if IPv6 is configured on the VPS.
 
 ### 2. Configure
 
-Clone the repository, enter `private-demo`, and create the production environment:
+Clone the repository, enter `web-demo`, and create the production environment:
 
 ```sh
-cp .env.production.example .env
+cp .env.example .env
 chmod 600 .env
-mkdir -p data/automerge data/widgets data/bundles data/packages data/npm-cache
+mkdir -p data
 ```
 
-Set `APP_DOMAIN`, `SYNC_DOMAIN`, `ACME_EMAIL`, and the capped `OPENROUTER_API_KEY`. The application is intentionally public: possession of a document URL grants edit access, and no document index is exposed.
+Switch `APP_DOMAIN`, `SYNC_DOMAIN` and `VITE_SYNC_URL` to the commented production values, and set `ACME_EMAIL` and the capped `OPENROUTER_API_KEY`. The application is intentionally public: possession of a document URL grants edit access, and no document index is exposed.
 
 The container runs as UID 1000. On a new host, give it ownership of the data directory:
 
@@ -99,9 +77,9 @@ sudo chown -R 1000:1000 data
 ### 3. Start and verify
 
 ```sh
-docker compose up -d --build
+just up
 docker compose ps
-docker compose logs -f theadoc caddy
+just logs
 curl -fsS "https://$APP_DOMAIN/api/health"
 curl -fsS "https://$SYNC_DOMAIN/"
 ```
@@ -114,10 +92,10 @@ Take a provider snapshot before an upgrade, then:
 
 ```sh
 git pull --ff-only
-docker compose up -d --build
+just up
 ```
 
-To roll back, check out the previous known-good commit and run the same Compose command. Do not remove `data/` or run `docker compose down -v`.
+To roll back, check out the previous known-good commit and run `just up` again. Do not remove `data/` or run `docker compose down -v`.
 
 ### Backups
 

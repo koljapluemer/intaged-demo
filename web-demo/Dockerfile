@@ -7,6 +7,9 @@ ARG VITE_SYNC_URL
 ENV VITE_SYNC_URL=$VITE_SYNC_URL
 RUN npm run build
 
+FROM build AS check
+RUN npm run lint && npm test
+
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
