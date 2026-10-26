@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { APICallError, isStepCount, RetryError, ToolLoopAgent, type LanguageModel, type StopCondition } from 'ai'
+import {
+  APICallError,
+  isStepCount,
+  RetryError,
+  ToolLoopAgent,
+  type LanguageModel,
+  type StepResult,
+  type StopCondition,
+} from 'ai'
 import type { WidgetSource } from '../src/types.js'
 import type { Bundler } from './bundler.js'
 import { config } from './config.js'
@@ -107,6 +115,34 @@ export class WidgetGenerator {
       input.onProgress?.(next)
     }
 
+    // One JSON line per step and per run, to see where time and tokens go (`just logs`).
+    const runStart = Date.now()
+    let stepStart = runStart
+    const totals = { steps: 0, input: 0, cached: 0, output: 0, reasoning: 0 }
+    const logStep = (step: StepResult<WidgetTools>) => {
+      const { usage } = step
+      const tokens = {
+        input: usage.inputTokens ?? 0,
+        cached: usage.inputTokenDetails.cacheReadTokens ?? 0,
+        output: usage.outputTokens ?? 0,
+        reasoning: usage.outputTokenDetails.reasoningTokens ?? 0,
+      }
+      totals.steps += 1
+      totals.input += tokens.input
+      totals.cached += tokens.cached
+      totals.output += tokens.output
+      totals.reasoning += tokens.reasoning
+      console.log(
+        JSON.stringify({
+          event: 'generation_step',
+          step: step.stepNumber,
+          tools: step.toolCalls.map((call) => call.toolName),
+          ms: Date.now() - stepStart,
+          ...tokens,
+        }),
+      )
+    }
+
     const finished: StopCondition<WidgetTools> = () => workspace.finished
     const overBudget: StopCondition<WidgetTools> = ({ steps }) =>
       steps.reduce((total, step) => total + (step.usage.totalTokens ?? 0), 0) > config.maxAgentTokens
@@ -120,9 +156,14 @@ export class WidgetGenerator {
       maxOutputTokens: 16_000,
       stopWhen: [isStepCount(config.maxAgentSteps), finished, overBudget],
       onToolExecutionStart: ({ toolCall }) => progress(stageFor(toolCall.toolName)),
+      onStepStart: () => {
+        stepStart = Date.now()
+      },
+      onStepEnd: logStep,
     })
 
     progress('Planning')
+    let outcome = 'ok'
     try {
       await agent.generate({
         prompt: userPrompt(input),
@@ -130,7 +171,18 @@ export class WidgetGenerator {
         timeout: config.generationTimeoutMs,
       })
     } catch (error) {
+      outcome = 'error'
       throw friendlyError(error)
+    } finally {
+      console.log(
+        JSON.stringify({
+          event: 'generation_run',
+          model: config.model,
+          outcome: outcome === 'ok' && !workspace.currentBundle ? 'no_build' : outcome,
+          ms: Date.now() - runStart,
+          ...totals,
+        }),
+      )
     }
 
     // An unfinished run still counts if its latest change built cleanly.
