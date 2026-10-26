@@ -23,7 +23,7 @@ watch(
 
 function onMessage(event: MessageEvent) {
   if (event.source !== frame.value?.contentWindow || !isWidgetMessage(event.data)) return
-  if (event.data.type === 'resize' && event.data.height) height.value = Math.min(Math.max(event.data.height, 60), 1200)
+  if (event.data.type === 'resize' && event.data.height) height.value = Math.max(event.data.height, 60)
   if (event.data.type === 'error' && event.data.message) emit('error', event.data.message)
 }
 

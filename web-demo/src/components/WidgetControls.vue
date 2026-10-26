@@ -25,7 +25,7 @@ const stale = computed(() => Boolean(props.artifact && currentHash.value && prop
 // Out-of-date, failed or missing renders keep the button visible; otherwise it only shows on hover.
 const showGenerate = computed(() => props.hovered || busy.value || stale.value || Boolean(error.value) || !props.artifact)
 const generateTitle = computed(() => {
-  if (busy.value) return 'Rendering…'
+  if (busy.value) return `${generation(props.blockId)?.stage ?? 'Rendering'}…`
   if (error.value) return `Render failed: ${error.value}`
   if (stale.value) return 'Out of date, re-render'
   return props.artifact ? 'Re-render' : 'Render'

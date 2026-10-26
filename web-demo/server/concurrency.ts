@@ -11,7 +11,7 @@ export class WorkQueue {
 
   async run<T>(work: () => Promise<T>): Promise<T> {
     if (this.active >= this.concurrency) {
-      if (this.waiting.length >= this.maxWaiting) throw new QueueFullError('generation queue is full')
+      if (this.waiting.length >= this.maxWaiting) throw new QueueFullError('Too many widgets are being generated right now. Try again in a minute.')
       await new Promise<void>((resolve) => this.waiting.push(resolve))
     }
 
@@ -22,6 +22,10 @@ export class WorkQueue {
       this.active--
       this.waiting.shift()?.()
     }
+  }
+
+  get full() {
+    return this.active >= this.concurrency && this.waiting.length >= this.maxWaiting
   }
 
   get stats() {

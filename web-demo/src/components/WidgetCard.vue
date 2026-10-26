@@ -13,6 +13,10 @@ const emit = defineEmits<{ regenerate: [errors: string[]] }>()
 
 const runtimeErrors = ref<string[]>([])
 const error = computed(() => generation(props.blockId)?.error)
+const stage = computed(() => {
+  const current = generation(props.blockId)
+  return current?.busy ? `${current.stage ?? 'Rendering'}…` : null
+})
 
 watch(
   () => props.artifact,
@@ -34,9 +38,22 @@ function reportRuntimeError(message: string) {
     />
     <div
       v-else
-      class="flex h-36 items-center justify-center rounded-box border-2 border-dashed border-base-300 text-sm opacity-50"
+      class="flex h-36 items-center justify-center gap-2 rounded-box border-2 border-dashed border-base-300 text-sm opacity-50"
     >
-      Not rendered yet
+      <template v-if="stage">
+        <span class="loading loading-spinner loading-xs" />
+        {{ stage }}
+      </template>
+      <template v-else>
+        Not rendered yet
+      </template>
+    </div>
+    <div
+      v-if="artifact && stage"
+      class="mt-1 flex items-center gap-2 text-xs opacity-60"
+    >
+      <span class="loading loading-spinner loading-xs" />
+      {{ stage }}
     </div>
     <div
       v-if="error"
@@ -45,6 +62,12 @@ function reportRuntimeError(message: string) {
     >
       <TriangleAlert :size="16" />
       <span>{{ error }}</span>
+      <button
+        class="btn btn-ghost btn-xs"
+        @click="emit('regenerate', [])"
+      >
+        Try again
+      </button>
     </div>
   </div>
 </template>

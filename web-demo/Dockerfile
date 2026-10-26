@@ -9,6 +9,7 @@ RUN npm run build
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force
