@@ -18,6 +18,12 @@ const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: stri
 const root = ref<HTMLDivElement>()
 let view: EditorView | undefined
 
+// CodeMirror's light base theme hardcodes a black caret; follow the page's daisyUI theme instead.
+const caretTheme = EditorView.theme({
+  '.cm-content': { caretColor: 'var(--color-base-content)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-base-content)' },
+})
+
 function selectedRevision(blockId: string) {
   return props.handle.doc().widgets[blockId]?.selectedRevision
 }
@@ -89,6 +95,7 @@ onMounted(() => {
         markdown(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.lineWrapping,
+        caretTheme,
         automergeSyncPlugin({ handle: props.handle, path: ['markdown'] }),
         markdownPreview,
         widgetDecorations({
