@@ -49,81 +49,9 @@ OPENROUTER_MODEL=x-ai/grok-4.3                # $1.25 / $2.50
 
 Anthropic routes on OpenRouter need explicit cache markers, which the generator does not set, so expect `cached` to stay at zero with Haiku. List current IDs and prices with `curl -s https://openrouter.ai/api/v1/models`. If a cheaper model only falls short on hard specs, the next step is splitting per step (cheap model first, current default on the retry) rather than switching back entirely.
 
-## Ubuntu VPS deployment
+## Deployment
 
-The production target is Ubuntu 24.04 with Docker Engine, the Compose plugin, two DNS names, and provider-managed daily snapshots.
-
-### 1. Prepare the host
-
-Create a non-root deployment user and install Docker from Docker's official apt repository. Add the user to the `docker` group. Enable the firewall while preserving SSH:
-
-```sh
-sudo ufw allow OpenSSH
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 443/udp
-sudo ufw enable
-```
-
-Point DNS A records for both names at the VPS:
-
-- `theadoc.example.com`
-- `sync.theadoc.example.com`
-
-Add AAAA records only if IPv6 is configured on the VPS.
-
-### 2. Configure
-
-Clone the repository, enter `web-demo`, and create the production environment:
-
-```sh
-cp .env.example .env
-chmod 600 .env
-mkdir -p data
-```
-
-Switch `APP_DOMAIN`, `SYNC_DOMAIN` and `VITE_SYNC_URL` to the commented production values, and set `ACME_EMAIL` and the capped `OPENROUTER_API_KEY`. The application is intentionally public: possession of a document URL grants edit access, and no document index is exposed.
-
-The container runs as UID 1000. On a new host, give it ownership of the data directory:
-
-```sh
-sudo chown -R 1000:1000 data
-```
-
-### 3. Start and verify
-
-```sh
-just up
-docker compose ps
-just logs
-curl -fsS "https://$APP_DOMAIN/api/health"
-curl -fsS "https://$SYNC_DOMAIN/"
-```
-
-Caddy obtains and renews TLS certificates. Only Caddy publishes host ports; application and sync ports remain inside the Compose network.
-
-### Updates and rollback
-
-Take a provider snapshot before an upgrade, then:
-
-```sh
-git pull --ff-only
-just up
-```
-
-To roll back, check out the previous known-good commit and run `just up` again. Do not remove `data/` or run `docker compose down -v`.
-
-### Backups
-
-Enable daily snapshots in the VPS provider dashboard. For a manual portable data backup, briefly stop the writer and archive the bind mount:
-
-```sh
-docker compose stop theadoc
-tar -czf "theadoc-data-$(date +%Y%m%d-%H%M%S).tar.gz" data
-docker compose start theadoc
-```
-
-Copy the archive off the VPS. Restore by stopping theadoc, replacing `data/` from an archive, restoring ownership to UID 1000, and starting the service again.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for deploying to an Ubuntu VPS on DigitalOcean.
 
 ## Storage
 
