@@ -1,4 +1,3 @@
-import 'dotenv/config'
 import path from 'node:path'
 
 function integer(name: string, fallback: number): number {

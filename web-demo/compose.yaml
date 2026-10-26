@@ -1,18 +1,25 @@
+name: theadoc
+
 services:
   theadoc:
     build:
       context: .
       args:
-        VITE_SYNC_URL: wss://${SYNC_DOMAIN}
+        VITE_SYNC_URL: ${VITE_SYNC_URL:?set VITE_SYNC_URL in .env}
     restart: unless-stopped
     environment:
       APP_PORT: 3000
       SYNC_PORT: 3030
       DATA_DIR: /data
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-terra}
     volumes:
-      - ./data:/data
+      # Fail instead of letting Docker create ./data as root, which the node user cannot write.
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
     expose:
       - "3000"
       - "3030"
@@ -30,9 +37,9 @@ services:
       theadoc:
         condition: service_healthy
     environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-      SYNC_DOMAIN: ${SYNC_DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env}
+      SYNC_DOMAIN: ${SYNC_DOMAIN:?set SYNC_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
     ports:
       - "80:80"
       - "443:443"
