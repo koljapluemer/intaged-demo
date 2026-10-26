@@ -41,7 +41,11 @@ const RETRY_DELAY_MS = 5_000
 
 function userPrompt(input: GenerateInput) {
   const parts = [`SPECIFICATION:\n${input.spec}`]
-  if (input.previous) parts.push('The workspace contains the previous version of this widget.')
+  if (input.previous) {
+    parts.push(
+      'The workspace contains the previous version of this widget. Make it match the specification above; remove elements the specification does not call for.',
+    )
+  }
   if (input.errors?.length) {
     parts.push(`PROBLEMS TO FIX (from the rendered widget or a previous attempt):\n${input.errors.map((error) => `- ${error}`).join('\n')}`)
   }

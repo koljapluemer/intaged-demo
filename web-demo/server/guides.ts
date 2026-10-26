@@ -24,7 +24,6 @@ Rules:
 - Text uses --wk-fg / --wk-fg-muted, never the series color. Gridlines and axes are recessive (--wk-grid).
 - Two or more series need a legend. Add hover tooltips on marks (--wk-surface background, --wk-border).
 - Never use a dual y-axis. Thin marks, 2px lines, rounded bar ends where the library allows.
-- No title or subtitle unless the specification asks. No outer border or card around the whole widget.
 - Controls (buttons, sliders, selects) use native elements styled with the variables, in one row above the visual.`,
 
   charts: `# Charts
