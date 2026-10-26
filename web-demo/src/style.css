@@ -59,7 +59,8 @@ body {
 /* Tabs sit on the box's top edge; the active one shares the box background. */
 .cm-widget-head {
   position: relative;
-  margin-top: 0.5rem;
+  /* Padding, not margin: CodeMirror's height map ignores margins on block widgets. */
+  padding-top: 0.5rem;
 }
 
 .cm-widget-tab {
@@ -87,5 +88,5 @@ body {
 }
 
 .cm-widget-shell {
-  margin: 0.25rem 0 0.75rem;
+  padding: 0.25rem 0 0.75rem;
 }

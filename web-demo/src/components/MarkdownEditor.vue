@@ -4,7 +4,7 @@ import type { DocHandle } from '@automerge/automerge-repo'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { drawSelection, EditorView, keymap } from '@codemirror/view'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { selectRevision } from '../document'
 import { markdownPreview } from '../editor/markdownPreview'
@@ -42,8 +42,7 @@ function generated(blockId: string, value: WidgetArtifact) {
 
 function addId(block: WidgetBlock, blockId: string) {
   if (!view) return
-  const next = withBlockId(view.state.doc.toString(), block, blockId)
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })
+  view.dispatch({ changes: withBlockId(block, blockId) })
 }
 
 function generate(block: WidgetBlock, errors?: string[]) {
@@ -92,6 +91,7 @@ onMounted(() => {
       doc: props.handle.doc().markdown,
       extensions: [
         history(),
+        drawSelection(),
         markdown(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.lineWrapping,

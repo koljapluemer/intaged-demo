@@ -64,6 +64,7 @@ function reportRuntimeError(message: string) {
       <span>{{ error }}</span>
       <button
         class="btn btn-ghost btn-xs"
+        @mousedown.prevent
         @click="emit('regenerate', [])"
       >
         Try again

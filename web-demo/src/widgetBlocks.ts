@@ -42,10 +42,9 @@ export function splitWidgetBlocks(markdown: string): MarkdownSegment[] {
   return segments
 }
 
-export function withBlockId(markdown: string, block: WidgetBlock, blockId: string): string {
-  const opening = markdown.slice(block.from, block.infoTo)
-  const nextOpening = opening.replace(/^```intaged[^\n]*$/, `\`\`\`intaged id=${blockId}`)
-  return markdown.slice(0, block.from) + nextOpening + markdown.slice(block.infoTo)
+// Only the opening fence changes, so selections and concurrent edits elsewhere are untouched.
+export function withBlockId(block: WidgetBlock, blockId: string) {
+  return { from: block.from, to: block.infoTo, insert: `\`\`\`intaged id=${blockId}` }
 }
 
 export async function sha256(value: string): Promise<string> {

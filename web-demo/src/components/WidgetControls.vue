@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RefreshCw, WandSparkles } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { sha256, WIDGET_MODES, type WidgetMode } from '../widgetBlocks'
 import { generation } from '../widgetGeneration'
 import type { WidgetArtifact } from '../types'
@@ -10,7 +10,8 @@ const props = defineProps<{
   spec: string
   artifact?: WidgetArtifact | null
   mode: WidgetMode
-  hovered: boolean
+  hoveredKey: Ref<string | null>
+  widgetKey: string
 }>()
 const emit = defineEmits<{
   mode: [mode: WidgetMode]
@@ -22,8 +23,9 @@ const currentHash = ref('')
 const busy = computed(() => Boolean(generation(props.blockId)?.busy))
 const error = computed(() => generation(props.blockId)?.error)
 const stale = computed(() => Boolean(props.artifact && currentHash.value && props.artifact.specHash !== currentHash.value))
+const hovered = computed(() => props.hoveredKey.value === props.widgetKey)
 // Out-of-date, failed or missing renders keep the button visible; otherwise it only shows on hover.
-const showGenerate = computed(() => props.hovered || busy.value || stale.value || Boolean(error.value) || !props.artifact)
+const showGenerate = computed(() => hovered.value ||busy.value || stale.value || Boolean(error.value) || !props.artifact)
 const generateTitle = computed(() => {
   if (busy.value) return `${generation(props.blockId)?.stage ?? 'Rendering'}…`
   if (error.value) return `Render failed: ${error.value}`
@@ -51,6 +53,7 @@ async function updateHash(spec: string) {
         class="cm-widget-tab"
         :class="{ 'cm-widget-tab-active': option === mode }"
         :aria-selected="option === mode"
+        @mousedown.prevent
         @click="emit('mode', option)"
       >
         {{ labels[option] }}
@@ -62,6 +65,7 @@ async function updateHash(spec: string) {
       :class="[showGenerate ? 'opacity-100' : 'pointer-events-none opacity-0', { 'text-warning': stale, 'text-error': error }]"
       :disabled="busy || !spec"
       :title="generateTitle"
+      @mousedown.prevent
       @click="emit('generate')"
     >
       <span

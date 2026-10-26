@@ -1,6 +1,6 @@
 import { EditorState, RangeSet, StateEffect, StateField, type Extension, type Range, type Transaction } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
-import { createApp, h, shallowReactive, type App, type Component } from 'vue'
+import { createApp, h, ref, shallowReactive, type App, type Component, type Ref } from 'vue'
 import WidgetCard from '../components/WidgetCard.vue'
 import WidgetControls from '../components/WidgetControls.vue'
 import { findWidgetBlocks, type WidgetBlock, type WidgetMode } from '../widgetBlocks'
@@ -8,7 +8,6 @@ import type { WidgetArtifact } from '../types'
 
 export const refreshWidgets = StateEffect.define<void>()
 export const setWidgetMode = StateEffect.define<{ key: string; mode: WidgetMode }>()
-const setHoveredWidget = StateEffect.define<string | null>()
 
 interface WidgetOptions {
   getRevision: (blockId: string) => string | undefined
@@ -24,8 +23,17 @@ function sameBlock(a: WidgetBlock, b: WidgetBlock) {
   return a.from === b.from && a.to === b.to && a.blockId === b.blockId && a.spec === b.spec
 }
 
+// Hover is purely visual, so it lives in a Vue ref instead of editor state: no transaction per mouse move.
+const hoveredWidgets = new WeakMap<EditorView, Ref<string | null>>()
+
+function hoveredWidget(view: EditorView) {
+  let hovered = hoveredWidgets.get(view)
+  if (!hovered) hoveredWidgets.set(view, (hovered = ref(null)))
+  return hovered
+}
+
 // Vue apps survive spec edits, so the iframe is not reloaded on every keystroke.
-const mountedApps = new WeakMap<HTMLElement, { app: App; props: object }>()
+const mountedApps = new WeakMap<HTMLElement, { app: App; props: object; resize: ResizeObserver }>()
 
 abstract class VueWidget extends WidgetType {
   protected abstract readonly component: Component
@@ -39,7 +47,10 @@ abstract class VueWidget extends WidgetType {
     const component = this.component
     const app = createApp({ render: () => h(component, props) })
     app.mount(root)
-    mountedApps.set(root, { app, props })
+    // Iframes, spinners and alerts change the height without CodeMirror noticing; keep its height map in sync.
+    const resize = new ResizeObserver(() => view.requestMeasure())
+    resize.observe(root)
+    mountedApps.set(root, { app, props, resize })
     return root
   }
 
@@ -52,7 +63,9 @@ abstract class VueWidget extends WidgetType {
   }
 
   destroy(dom: HTMLElement) {
-    mountedApps.get(dom)?.app.unmount()
+    const mounted = mountedApps.get(dom)
+    mounted?.resize.disconnect()
+    mounted?.app.unmount()
     mountedApps.delete(dom)
   }
 }
@@ -63,7 +76,6 @@ class ControlsWidget extends VueWidget {
   constructor(
     private readonly block: WidgetBlock,
     private readonly mode: WidgetMode,
-    private readonly hovered: boolean,
     private readonly artifact: WidgetArtifact | null | undefined,
     private readonly options: WidgetOptions,
   ) {
@@ -71,7 +83,11 @@ class ControlsWidget extends VueWidget {
   }
 
   eq(other: ControlsWidget) {
-    return sameBlock(this.block, other.block) && this.mode === other.mode && this.hovered === other.hovered && this.artifact === other.artifact
+    return sameBlock(this.block, other.block) && this.mode === other.mode && this.artifact === other.artifact
+  }
+
+  get estimatedHeight() {
+    return 28
   }
 
   protected className() {
@@ -84,7 +100,8 @@ class ControlsWidget extends VueWidget {
       spec: this.block.spec,
       artifact: this.artifact,
       mode: this.mode,
-      hovered: this.hovered,
+      hoveredKey: hoveredWidget(view),
+      widgetKey: widgetKey(this.block),
       onMode: (mode: WidgetMode) => {
         // Keep the cursor out of spec text that is about to be hidden.
         const { head } = view.state.selection.main
@@ -114,6 +131,10 @@ class CardWidget extends VueWidget {
     return sameBlock(this.block, other.block) && this.artifact === other.artifact
   }
 
+  get estimatedHeight() {
+    return 176
+  }
+
   protected className() {
     return 'cm-widget-shell'
   }
@@ -130,15 +151,13 @@ class CardWidget extends VueWidget {
 // Local view state: not part of the shared document.
 interface WidgetUi {
   modes: ReadonlyMap<string, WidgetMode>
-  hovered: string | null
 }
 
 const widgetUi = StateField.define<WidgetUi>({
-  create: () => ({ modes: new Map(), hovered: null }),
+  create: () => ({ modes: new Map() }),
   update(value, transaction) {
     for (const effect of transaction.effects) {
       if (effect.is(setWidgetMode)) value = { ...value, modes: new Map(value.modes).set(effect.value.key, effect.value.mode) }
-      if (effect.is(setHoveredWidget)) value = { ...value, hovered: effect.value }
     }
     return value
   },
@@ -155,7 +174,7 @@ const hiddenLine = Decoration.replace({ block: true })
 const fenceRange = Decoration.mark({})
 
 function buildState(state: EditorState, options: WidgetOptions): WidgetState {
-  const { modes, hovered } = state.field(widgetUi)
+  const { modes } = state.field(widgetUi)
   const decorations: Range<Decoration>[] = []
   const fences: Range<Decoration>[] = []
   const blocks = findWidgetBlocks(state.doc.toString())
@@ -168,7 +187,7 @@ function buildState(state: EditorState, options: WidgetOptions): WidgetState {
     const artifact = revision ? options.getArtifact(revision) : null
     // The rendered mode folds the spec lines into the controls, which also protects them like a fence.
     const headTo = mode === 'rendered' && closing.number > opening.number + 1 ? closing.from - 1 : opening.to
-    const controls = new ControlsWidget(block, mode, hovered === key, artifact, options)
+    const controls = new ControlsWidget(block, mode, artifact, options)
     decorations.push(Decoration.replace({ widget: controls, block: true }).range(opening.from, headTo))
     if (mode !== 'rendered') {
       for (let number = opening.number + 1; number < closing.number; number++) {
@@ -224,8 +243,9 @@ export function widgetDecorations(options: WidgetOptions): Extension {
   })
   // Listens on the editor element directly: CodeMirror's own handlers skip events inside widgets.
   const hover = ViewPlugin.define((view) => {
+    const hovered = hoveredWidget(view)
     const setHovered = (key: string | null) => {
-      if (view.state.field(widgetUi).hovered !== key) view.dispatch({ effects: setHoveredWidget.of(key) })
+      hovered.value = key
     }
     const onMove = (event: MouseEvent) => {
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
