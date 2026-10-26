@@ -10,7 +10,7 @@ Local development and production run the same `compose.yaml` (app plus Caddy). O
 
 ```sh
 cp .env.example .env
-# Add a capped OPENROUTER_API_KEY to .env.
+# Add a capped OPENROUTER_API_KEY and an ADMIN_TOKEN (openssl rand -hex 32) to .env.
 just up      # build and (re)start in the background
 just logs    # follow logs
 just down    # stop and remove containers; data/ is kept
@@ -18,6 +18,19 @@ just check   # lint and test inside the Docker build
 ```
 
 Locally, the defaults in `.env.example` serve the app at http://localhost and sync at `ws://sync.localhost`, both through Caddy on port 80. Persistent data is written to `./data`.
+
+## Access
+
+Only the admin can create documents. Open `http://localhost/admin#<ADMIN_TOKEN>` once per browser: the token is saved in that browser's local storage and the page redirects to `/`, where the "New document" buttons now appear. The token travels in the URL fragment, so it never reaches the server's access logs or a `Referer` header.
+
+The server keeps a list of documents the admin has created in `/data/documents.json`, and generates widgets only for those. Everyone else can open, edit and generate widgets in a document only if they have its link; the unguessable link is the capability. Documents created before this list existed are added when the admin opens them once.
+
+To rotate the token, change `ADMIN_TOKEN` in `.env`, run `just up`, and open the new admin link. Browsers with the old token lose the "New document" buttons the next time they try to create a document.
+
+Known gaps, accepted for a demo:
+
+- The sync server stores any Automerge document a client sends, so someone could fill the disk with junk documents. Those documents cannot generate widgets.
+- Anyone who has a document link can generate as many widgets as the OpenRouter limit allows.
 
 ## OpenRouter budget
 
@@ -56,6 +69,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for deploying to an Ubuntu VPS on DigitalOcea
 ## Storage
 
 - Automerge repository: `/data/automerge`
+- Documents registered by the admin: `/data/documents.json`
 - Immutable generated artifacts: `/data/widgets`
 - Immutable, content-addressed widget bundles: `/data/bundles`
 - Installed widget dependencies and npm cache: `/data/packages`, `/data/npm-cache` (safe to delete; reinstalled on demand)

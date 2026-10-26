@@ -13,6 +13,7 @@ services:
       DATA_DIR: /data
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-terra}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
     volumes:
       # Fail instead of letting Docker create ./data as root, which the node user cannot write.
       - type: bind

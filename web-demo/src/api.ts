@@ -12,7 +12,7 @@ const POLL_INTERVAL_MS = 1_000
 // How long the server may be unreachable before a generation is reported as lost.
 const RECONNECT_WINDOW_MS = 60_000
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -75,3 +75,10 @@ export async function generateWidget(input: GenerateWidgetInput, onProgress: (st
 export const getWidget = (revision: string) => request<WidgetArtifact>(`/api/widgets/${revision}`)
 
 export const getBundle = (hash: string) => request<WidgetBundle>(`/api/bundles/${hash}`)
+
+export const registerDocument = (documentId: string, token: string) =>
+  request<void>('/api/documents', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ documentId }),
+  })

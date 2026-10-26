@@ -2,12 +2,17 @@
 import type { DocHandle } from '@automerge/automerge-repo'
 import { FilePlus2, FileText, Link2 } from '@lucide/vue'
 import { onMounted, ref, shallowRef } from 'vue'
+import { captureAdminLink, clearAdminToken, readAdminToken } from './admin'
+import { HttpError, registerDocument } from './api'
 import DocumentView from './components/DocumentView.vue'
 import { documentIdFromUrl, documentUrlFromId, NEW_DOCUMENT } from './document'
 import { readRecentDocuments, rememberDocument, type RecentDocument } from './recentDocs'
 import { repo } from './repo'
 import type { TheadocDocument } from './types'
 
+captureAdminLink()
+
+const adminToken = ref(readAdminToken())
 const handle = shallowRef<DocHandle<TheadocDocument> | null>(null)
 const documentId = ref<string | null>(null)
 const recent = ref<RecentDocument[]>(readRecentDocuments())
@@ -28,6 +33,8 @@ async function openDocument(id: string, push = true) {
     documentId.value = id
     if (push) history.pushState({}, '', `/d/${encodeURIComponent(id)}`)
     updateRecent(next.doc().markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || 'Untitled')
+    // Opening a document as admin registers it, which also covers documents created before registration.
+    if (adminToken.value) void registerDocument(id, adminToken.value).catch(() => undefined)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
@@ -35,9 +42,27 @@ async function openDocument(id: string, push = true) {
   }
 }
 
-function createDocument() {
+async function createDocument() {
+  if (!adminToken.value) return
+  loading.value = true
+  error.value = null
   const next = repo.create<TheadocDocument>(structuredClone(NEW_DOCUMENT))
   const id = documentIdFromUrl(next.url)
+  try {
+    await registerDocument(id, adminToken.value)
+  } catch (reason) {
+    if (reason instanceof HttpError && reason.status === 401) {
+      clearAdminToken()
+      adminToken.value = null
+      error.value = 'Admin token was rejected.'
+    } else {
+      error.value = reason instanceof Error ? reason.message : String(reason)
+    }
+    repo.delete(next.url)
+    return
+  } finally {
+    loading.value = false
+  }
   handle.value = next
   documentId.value = id
   history.pushState({}, '', `/d/${encodeURIComponent(id)}`)
@@ -112,6 +137,7 @@ onMounted(() => {
           </div>
           <div class="mt-8 flex gap-2">
             <button
+              v-if="adminToken"
               class="btn btn-primary"
               :disabled="loading"
               @click="createDocument"
@@ -139,8 +165,10 @@ onMounted(() => {
           <span class="text-lg font-bold">theadoc</span>
           <div class="flex-1" />
           <button
+            v-if="adminToken"
             class="btn btn-square btn-primary btn-sm"
             title="New document"
+            :disabled="loading"
             @click="createDocument"
           >
             <FilePlus2 :size="17" />

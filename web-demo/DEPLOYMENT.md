@@ -163,6 +163,7 @@ ACME_EMAIL=you@example.com
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=openai/gpt-5.6-terra
 EOF
+echo "ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
 chmod 600 .env
 ```
 
@@ -190,7 +191,13 @@ curl -fsS https://demo.example.com/api/health       # {"ok":true,...}
 curl -fsS https://sync.demo.example.com/            # theadoc sync is running
 ```
 
-Open `https://demo.example.com`. Anyone who has a document's URL can edit that document, and there is no index of documents.
+Unlock document creation in your own browser. Print the admin link:
+
+```sh
+echo "https://demo.example.com/admin#$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2)"
+```
+
+Open that link once in each browser you create documents from. The "New document" buttons then appear. Keep the link private: anyone who has it can create documents. Anyone who has a document's URL can edit that document and generate widgets in it, and there is no index of documents. See [README.md](README.md#access) for details.
 
 If HTTPS fails, read Caddy's log with `docker compose logs caddy`. The usual causes are DNS records that haven't propagated yet, or a firewall rule for port 80 or 443 that is missing.
 
@@ -212,6 +219,8 @@ docker image prune -f
 ```
 
 To roll back, run `git checkout <previous-commit>`, then `just up`.
+
+To rotate the admin token, replace `ADMIN_TOKEN` in `.env`, run `just up`, and open the new admin link.
 
 Never run `docker compose down -v`. It deletes Caddy's certificates. Never delete `data/`, which holds every document and widget.
 

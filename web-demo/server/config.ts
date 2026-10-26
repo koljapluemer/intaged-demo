@@ -17,6 +17,7 @@ export const config = {
   npmCacheDir: path.join(dataDir, 'npm-cache'),
   model: process.env.OPENROUTER_MODEL ?? 'openai/gpt-5.6-terra',
   openRouterKey: process.env.OPENROUTER_API_KEY ?? '',
+  adminToken: process.env.ADMIN_TOKEN ?? '',
   maxConcurrentGenerations: 2,
   maxQueuedGenerations: 10,
   maxSpecLength: 20_000,
