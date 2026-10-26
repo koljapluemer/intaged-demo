@@ -39,13 +39,15 @@ Every agent step logs one JSON line (`"event":"generation_step"`: tools called, 
 
 What to look for: if `cached` stays near zero on later steps, prompt caching is not working; if `reasoning` dominates `output`, the model thinks more than it writes; if runs take many steps, the time goes to round trips rather than to any single call.
 
-The whole loop runs on one model. To try a cheaper or faster one, change `OPENROUTER_MODEL` and generate the same handful of specs (a chart, a map, a form-like interaction, a 3D scene) with each candidate, comparing quality, run time and cost. Candidates to try first (check current price and tool-calling support on openrouter.ai before relying on them):
+The whole loop runs on one model. To try a cheaper or faster one, set `OPENROUTER_MODEL` in `.env`, run `just up`, and generate the same handful of specs (a chart, a map, a form-like interaction, a 3D scene) with each candidate, comparing quality, run time and cost. Candidates to try first, all with tool calling (prices per million input/output tokens from OpenRouter's model list on 2026-10-26; the default `openai/gpt-5.6-terra` is $2 / $12):
 
-- `x-ai/grok-code-fast-1`: cheap ($0.20/M input, $1.50/M output at the time of writing) and built for agentic coding loops.
-- Kimi K2.6 (Moonshot): one of the most-used tool-calling models on OpenRouter, roughly a third of the current default's price.
-- Claude Haiku (latest): fast and strong at tool use. Anthropic routes on OpenRouter need explicit cache markers, so check the `cached` column.
+```sh
+OPENROUTER_MODEL=anthropic/claude-haiku-5.5   # $0.10 / $0.50
+OPENROUTER_MODEL=moonshotai/kimi-k2.7-code    # $0.67 / $3.35
+OPENROUTER_MODEL=x-ai/grok-4.3                # $1.25 / $2.50
+```
 
-Model IDs on OpenRouter change; look up the exact current ID before setting it. If a cheaper model only falls short on hard specs, the next step is splitting per step (cheap model first, current default on the retry) rather than switching back entirely.
+Anthropic routes on OpenRouter need explicit cache markers, which the generator does not set, so expect `cached` to stay at zero with Haiku. List current IDs and prices with `curl -s https://openrouter.ai/api/v1/models`. If a cheaper model only falls short on hard specs, the next step is splitting per step (cheap model first, current default on the retry) rather than switching back entirely.
 
 ## Ubuntu VPS deployment
 
