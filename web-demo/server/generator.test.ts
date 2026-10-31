@@ -72,6 +72,15 @@ describe('WidgetGenerator', () => {
     expect(result.source.files['main.ts']).toBe('const done = 1')
   })
 
+  it('sets network hosts together with the files', async () => {
+    const { generator, model } = await createGenerator([
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const map = 1' }], network: ['tile.openstreetmap.org'] }]),
+    ])
+    const result = await generator.generate({ spec: 'a map' })
+    expect(model.doGenerateCalls).toHaveLength(1)
+    expect(result.source.network).toEqual(['tile.openstreetmap.org'])
+  })
+
   it('does not deliver the untouched starter entry point', async () => {
     const { generator, model } = await createGenerator([
       toolStep(['write_files', { files: [{ path: 'body.html', content: '<p>hi</p>' }] }]),

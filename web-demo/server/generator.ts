@@ -49,7 +49,11 @@ const RETRY_DELAY_MS = 5_000
 
 function userPrompt(input: GenerateInput) {
   const parts = [`SPECIFICATION:\n${input.spec}`]
-  if (input.previous) {
+  if (!input.previous) {
+    parts.push(
+      'The workspace holds only placeholder files (body.html, style.css and a TODO main.ts) and no dependencies. Do not list or read them: write the complete widget with write_files.',
+    )
+  } else {
     parts.push(
       'The workspace contains the previous version of this widget. Make it match the specification above; remove elements the specification does not call for.',
     )

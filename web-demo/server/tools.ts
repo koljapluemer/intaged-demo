@@ -155,15 +155,20 @@ export function createTools(deps: ToolDeps) {
       inputSchema: z.object({
         files: z.array(z.object({ path: z.string(), content: z.string() })).max(20),
         delete: z.array(z.string()).optional(),
+        network: z
+          .array(z.enum(NETWORK_HOSTS))
+          .optional()
+          .describe('hosts the widget may load map tiles from, same as set_network; omit to keep the current list'),
         more: MORE,
       }),
-      execute: ({ files, delete: removed, more }) =>
+      execute: ({ files, delete: removed, network, more }) =>
         exclusive(() =>
           attempt(() => {
             workspace.transaction(() => {
               for (const file of files) workspace.write(file.path, file.content)
               for (const name of removed ?? []) workspace.delete(name)
             }, !more)
+            if (network) workspace.setNetwork(network)
             return build()
           }),
         ),

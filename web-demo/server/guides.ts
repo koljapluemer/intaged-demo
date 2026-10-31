@@ -2,7 +2,7 @@ export const GUIDES = {
   sandbox: `# Sandbox runtime
 - The widget runs in an iframe with an opaque origin. body.html is inserted into <body>, then the bundled main.ts runs once.
 - Imports: relative files and npm packages added with add_dependency. CSS imported from packages (\`import 'leaflet/dist/leaflet.css'\`) and assets referenced by CSS are inlined.
-- No network by default. fetch/XHR/WebSocket to other hosts and remote images, fonts or scripts are blocked. Map tile hosts can be allowed with set_network.
+- No network by default. fetch/XHR/WebSocket to other hosts and remote images, fonts or scripts are blocked. Map tile hosts can be allowed with the network field of write_files (or set_network).
 - localStorage, sessionStorage, cookies, alert/confirm/prompt and window.open are unavailable. Keep state in memory.
 - Web workers only work from blob: URLs. Prefer packages that do not need workers, or configure them to run on the main thread.
 - Hardcode plausible sample data when data is needed.
@@ -35,9 +35,9 @@ Good default choices:
 Check the exact API with package_docs before using unfamiliar options.`,
 
   maps: `# Maps
-- leaflet: import L from 'leaflet' and import 'leaflet/dist/leaflet.css'. Tiles: https://tile.openstreetmap.org/{z}/{x}/{y}.png (call set_network with tile.openstreetmap.org). Include the OSM attribution. Default marker icons reference image files; use L.circleMarker or L.divIcon instead.
-- maplibre-gl: vector maps. import 'maplibre-gl/dist/maplibre-gl.css'. Style URL https://tiles.openfreemap.org/styles/liberty (set_network tiles.openfreemap.org). MapLibre needs workers; this may fail in the sandbox, so prefer Leaflet with raster tiles.
-- CARTO basemaps (light_all / dark_all raster) are at https://{s}.basemaps.cartocdn.com/... (set_network basemaps.cartocdn.com). Pick the dark style when prefers-color-scheme is dark.
+- leaflet: import L from 'leaflet' and import 'leaflet/dist/leaflet.css'. Tiles: https://tile.openstreetmap.org/{z}/{x}/{y}.png (allow tile.openstreetmap.org via write_files network). Include the OSM attribution. Default marker icons reference image files; use L.circleMarker or L.divIcon instead.
+- maplibre-gl: vector maps. import 'maplibre-gl/dist/maplibre-gl.css'. Style URL https://tiles.openfreemap.org/styles/liberty (allow tiles.openfreemap.org). MapLibre needs workers; this may fail in the sandbox, so prefer Leaflet with raster tiles.
+- CARTO basemaps (light_all / dark_all raster) are at https://{s}.basemaps.cartocdn.com/... (allow basemaps.cartocdn.com). Pick the dark style when prefers-color-scheme is dark.
 - Give the map container an explicit height (e.g. 360px).`,
 
   '3d': `# 3D
