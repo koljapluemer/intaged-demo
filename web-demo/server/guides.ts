@@ -44,7 +44,3 @@ Check the exact API with package_docs before using unfamiliar options.`,
 - three: import * as THREE from 'three'; addons from 'three/addons/...'. Size the renderer from the container width with a fixed height, update camera aspect and renderer size in a ResizeObserver, and call renderer.setPixelRatio(Math.min(devicePixelRatio, 2)).
 - Use setAnimationLoop and keep the scene light. Use a transparent clear color (renderer.setClearAlpha(0)) so the page background shows through.`,
 } as const
-
-export type GuideTopic = keyof typeof GUIDES
-
-export const GUIDE_TOPICS = Object.keys(GUIDES) as [GuideTopic, ...GuideTopic[]]

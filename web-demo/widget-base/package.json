@@ -1,0 +1,15 @@
+{
+  "name": "theadoc-widget-base",
+  "private": true,
+  "description": "Packages preinstalled for generated widgets; importable without add_dependency.",
+  "dependencies": {
+    "@observablehq/plot": "0.6.17",
+    "chart.js": "4.6.1",
+    "d3": "7.9.0",
+    "date-fns": "4.4.0",
+    "echarts": "6.1.0",
+    "leaflet": "1.9.4",
+    "lucide": "1.66.0",
+    "three": "0.187.0"
+  }
+}

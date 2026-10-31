@@ -24,9 +24,13 @@ export class Workspace {
   network: NetworkHost[]
   private revision = 0
   private lastBuild: { revision: number; result: BuildResult } | null = null
-  finished = false
+  /** Set when the agent's latest change was meant as the final one. */
+  private complete = false
+  private readonly fromStarter: boolean
 
-  constructor(seed: WidgetSource = STARTER) {
+  constructor(seed?: WidgetSource) {
+    this.fromStarter = !seed
+    seed ??= STARTER
     this.files = { ...seed.files }
     this.deps = { ...seed.deps }
     this.network = [...seed.network]
@@ -40,6 +44,31 @@ export class Workspace {
   get currentBundle(): string | null {
     const build = this.lastBuild
     return build && build.revision === this.revision && build.result.ok ? build.result.hash : null
+  }
+
+  /** True once the agent's final change has built cleanly. */
+  get finished() {
+    return this.complete && this.currentBundle !== null && !this.isStarterEntry
+  }
+
+  /** Whether anything changed since the workspace was seeded. */
+  get changed() {
+    return this.revision > 0
+  }
+
+  // A clean build of the untouched starter entry point is not a widget.
+  private get isStarterEntry() {
+    return this.fromStarter && this.files['main.ts'] === STARTER.files['main.ts']
+  }
+
+  /** Whether the current revision has been built, successfully or not. */
+  get built() {
+    return this.lastBuild?.revision === this.revision
+  }
+
+  /** Whether the workspace has been built during this generation. */
+  get hasBuilt() {
+    return this.lastBuild !== null
   }
 
   get lastDiagnostics(): string[] {
@@ -89,24 +118,34 @@ export class Workspace {
     this.touch()
   }
 
+  // Network access does not change the bundle, so it does not invalidate the latest build.
   setNetwork(hosts: NetworkHost[]) {
     this.network = [...new Set(hosts)]
-    this.touch()
+  }
+
+  /** Applies several changes atomically: if one fails, the workspace is left as it was. */
+  transaction(changes: () => void, complete: boolean) {
+    const files = { ...this.files }
+    const deps = { ...this.deps }
+    const revision = this.revision
+    try {
+      changes()
+    } catch (error) {
+      this.files = files
+      this.deps = deps
+      this.revision = revision
+      throw error
+    }
+    this.complete = complete
   }
 
   recordBuild(result: BuildResult) {
     this.lastBuild = { revision: this.revision, result }
-  }
-
-  finish() {
-    if (!this.currentBundle) {
-      throw new WorkspaceError('Run build after your last change and fix all errors before finishing')
-    }
-    this.finished = true
+    // Record the preinstalled packages the widget imports, so a later edit rebuilds against the same versions.
+    if (result.ok) for (const [name, version] of Object.entries(result.preinstalled)) this.deps[name] ??= version
   }
 
   private touch() {
     this.revision++
-    this.finished = false
   }
 }

@@ -47,29 +47,46 @@ async function createGenerator(steps: LanguageModelV4GenerateResult[]) {
 }
 
 describe('WidgetGenerator', () => {
-  it('runs the tool loop until a built workspace is finished', async () => {
+  it('delivers as soon as a final change builds cleanly, fixing build errors on the way', async () => {
     const { generator, model } = await createGenerator([
-      toolStep(['write_file', { path: 'main.ts', content: 'const = broken' }], ['build', {}]),
-      toolStep(['finish', { summary: 'premature' }]),
-      toolStep(['edit_file', { path: 'main.ts', old_text: 'const = broken', new_text: "document.body.dataset.ok = 'yes'" }], ['build', {}]),
-      toolStep(['finish', { summary: 'A tiny widget' }]),
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const = broken' }] }]),
+      toolStep(['edit_files', { edits: [{ path: 'main.ts', old_text: 'const = broken', new_text: "document.body.dataset.ok = 'yes'" }] }]),
     ])
     const stages: string[] = []
     const result = await generator.generate({ spec: 'a tiny widget', onProgress: (stage) => stages.push(stage) })
 
-    expect(model.doGenerateCalls).toHaveLength(4)
+    expect(model.doGenerateCalls).toHaveLength(2)
+    expect(JSON.stringify(model.doGenerateCalls[1].prompt)).toContain('main.ts:1')
     expect(result.source.files['main.ts']).toContain("dataset.ok = 'yes'")
     expect(result.bundle).toMatch(/^[0-9a-f]{64}$/)
-    expect(stages).toEqual(expect.arrayContaining(['Planning', 'Drawing', 'Checking', 'Finishing touches']))
+    expect(stages).toEqual(expect.arrayContaining(['Planning', 'Drawing', 'Refining']))
+  })
+
+  it('keeps going after a clean build when more changes were announced', async () => {
+    const { generator, model } = await createGenerator([
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'export {}' }], more: true }]),
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const done = 1' }] }]),
+    ])
+    const result = await generator.generate({ spec: 'two steps' })
+    expect(model.doGenerateCalls).toHaveLength(2)
+    expect(result.source.files['main.ts']).toBe('const done = 1')
+  })
+
+  it('does not deliver the untouched starter entry point', async () => {
+    const { generator, model } = await createGenerator([
+      toolStep(['write_files', { files: [{ path: 'body.html', content: '<p>hi</p>' }] }]),
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const real = 1' }] }]),
+    ])
+    await generator.generate({ spec: 'starter' })
+    expect(model.doGenerateCalls).toHaveLength(2)
   })
 
   it('retries once from the broken workspace with its build errors', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const { generator, model } = await createGenerator([
-      toolStep(['write_file', { path: 'main.ts', content: 'const = broken' }], ['build', {}]),
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const = broken' }] }]),
       giveUp,
-      toolStep(['edit_file', { path: 'main.ts', old_text: 'const = broken', new_text: 'const fixed = 1' }], ['build', {}]),
-      toolStep(['finish', { summary: 'fixed' }]),
+      toolStep(['edit_files', { edits: [{ path: 'main.ts', old_text: 'const = broken', new_text: 'const fixed = 1' }] }]),
     ])
     const result = await generator.generate({ spec: 'broken' })
     expect(result.source.files['main.ts']).toBe('const fixed = 1')
@@ -79,18 +96,18 @@ describe('WidgetGenerator', () => {
   it('fails with build diagnostics when the retry is broken too', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const { generator } = await createGenerator([
-      toolStep(['write_file', { path: 'main.ts', content: 'const = broken' }], ['build', {}]),
+      toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const = broken' }] }]),
       giveUp,
-      toolStep(['build', {}]),
       giveUp,
     ])
     await expect(generator.generate({ spec: 'broken' })).rejects.toThrow(/could not be built: main\.ts:1/)
   })
 
-  it('seeds the workspace from the previous version', async () => {
-    const { generator } = await createGenerator([toolStep(['build', {}]), toolStep(['finish', { summary: 'same' }])])
+  it('builds the previous version when the model changes nothing', async () => {
+    const { generator, model } = await createGenerator([giveUp])
     const previous = { files: { 'body.html': '<p></p>', 'main.ts': 'console.log("previous")' }, deps: {}, network: [] }
     const result = await generator.generate({ spec: 'unchanged', previous })
+    expect(model.doGenerateCalls).toHaveLength(1)
     expect(result.source).toEqual(previous)
   })
 })

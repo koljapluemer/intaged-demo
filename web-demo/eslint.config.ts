@@ -3,7 +3,7 @@ import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescri
 import pluginVue from 'eslint-plugin-vue'
 
 export default defineConfigWithVueTs(
-  { ignores: ['dist/**', 'dist-server/**', 'public/vendor/**', 'data/**'] },
+  { ignores: ['dist/**', 'dist-server/**', 'public/vendor/**', 'data/**', 'widget-base/**'] },
   eslint.configs.recommended,
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommended,

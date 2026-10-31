@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import {
   APICallError,
@@ -13,7 +13,7 @@ import type { WidgetSource } from '../src/types.js'
 import type { Bundler } from './bundler.js'
 import { config } from './config.js'
 import type { PackageRegistry } from './packages.js'
-import { GENERATOR_VERSION, SYSTEM_PROMPT } from './prompt.js'
+import { GENERATOR_VERSION, systemPrompt } from './prompt.js'
 import { createTools, stageFor, type WidgetTools } from './tools.js'
 import { Workspace } from './workspace.js'
 
@@ -60,17 +60,24 @@ function userPrompt(input: GenerateInput) {
   return parts.join('\n\n')
 }
 
+const rootCause = (error: unknown) => (RetryError.isInstance(error) ? error.lastError : error)
+
+function isTimeout(error: unknown) {
+  const cause = rootCause(error)
+  return cause instanceof Error && (cause.name === 'AbortError' || cause.name === 'TimeoutError')
+}
+
 function friendlyError(error: unknown): GenerationError {
   if (error instanceof GenerationError) return error
-  const cause = RetryError.isInstance(error) ? error.lastError : error
+  const cause = rootCause(error)
   if (APICallError.isInstance(cause) && cause.statusCode === 402) {
     return new GenerationError('Demo generation budget exhausted', 402)
   }
   if (APICallError.isInstance(cause) && cause.statusCode === 429) {
     return new GenerationError('The model is busy. Try again shortly.', 429, { problems: [] })
   }
-  if (cause instanceof Error && (cause.name === 'AbortError' || cause.name === 'TimeoutError')) {
-    return new GenerationError('Generation took too long. Try a simpler description.', 504)
+  if (isTimeout(cause)) {
+    return new GenerationError('Generation timed out before the widget built. Please try again.', 504)
   }
   const message = cause instanceof Error ? cause.message : String(cause)
   return new GenerationError(`The model request failed: ${message}`, 502, { problems: [] })
@@ -90,22 +97,27 @@ export class WidgetGenerator {
 
   /** Runs the agent, and once more from where it left off if the first attempt fails in a recoverable way. */
   async generate(input: GenerateInput): Promise<GenerateResult> {
+    // One OpenRouter session per generation keeps both attempts on the same provider, so its prompt cache hits.
+    const sessionId = randomUUID()
     try {
-      return await this.attempt(input)
+      return await this.attempt(input, sessionId)
     } catch (error) {
       if (!(error instanceof GenerationError) || !error.retry) throw error
       console.warn(`widget generation attempt failed, retrying: ${error.message}`)
       input.onProgress?.('Fixing problems')
       if (error.status === 429) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
-      return this.attempt({
-        ...input,
-        previous: error.retry.source ?? input.previous,
-        errors: error.retry.problems.length ? error.retry.problems : input.errors,
-      })
+      return this.attempt(
+        {
+          ...input,
+          previous: error.retry.source ?? input.previous,
+          errors: error.retry.problems.length ? error.retry.problems : input.errors,
+        },
+        sessionId,
+      )
     }
   }
 
-  private async attempt(input: GenerateInput): Promise<GenerateResult> {
+  private async attempt(input: GenerateInput, sessionId: string): Promise<GenerateResult> {
     if (!this.model) throw new GenerationError('OPENROUTER_API_KEY is not configured', 503)
     const workspace = new Workspace(input.previous)
     let stage = ''
@@ -149,11 +161,10 @@ export class WidgetGenerator {
 
     const agent = new ToolLoopAgent({
       model: this.model,
-      instructions: SYSTEM_PROMPT,
+      instructions: systemPrompt(this.bundler.preinstalled),
       tools: createTools({ workspace, registry: this.registry, bundler: this.bundler }),
-      // File edits and builds within one step must apply in the order the model wrote them.
-      toolCallConcurrency: 1,
       maxOutputTokens: 16_000,
+      providerOptions: { openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } },
       stopWhen: [isStepCount(config.maxAgentSteps), finished, overBudget],
       onToolExecutionStart: ({ toolCall }) => progress(stageFor(toolCall.toolName)),
       onStepStart: () => {
@@ -162,8 +173,13 @@ export class WidgetGenerator {
       onStepEnd: logStep,
     })
 
+    const logRun = (outcome: string) =>
+      console.log(
+        JSON.stringify({ event: 'generation_run', model: config.model, outcome, ms: Date.now() - runStart, ...totals }),
+      )
+
     progress('Planning')
-    let outcome = 'ok'
+    let failure: unknown = null
     try {
       await agent.generate({
         prompt: userPrompt(input),
@@ -171,22 +187,21 @@ export class WidgetGenerator {
         timeout: config.generationTimeoutMs,
       })
     } catch (error) {
-      outcome = 'error'
-      throw friendlyError(error)
-    } finally {
-      console.log(
-        JSON.stringify({
-          event: 'generation_run',
-          model: config.model,
-          outcome: outcome === 'ok' && !workspace.currentBundle ? 'no_build' : outcome,
-          ms: Date.now() - runStart,
-          ...totals,
-        }),
-      )
+      failure = error
+    }
+    const timedOut = failure !== null && isTimeout(failure) && !input.signal?.aborted
+    if (failure !== null && !timedOut) {
+      logRun('error')
+      throw friendlyError(failure)
     }
 
-    // An unfinished run still counts if its latest change built cleanly.
+    // An unfinished run (text reply, step limit, timeout) still counts if its latest change builds cleanly.
+    if (!workspace.built && (workspace.changed || input.previous)) {
+      workspace.recordBuild(await this.bundler.build(workspace.source))
+    }
     const bundle = workspace.currentBundle
+    logRun(bundle ? (timedOut ? 'timeout_salvaged' : 'ok') : timedOut ? 'timeout' : 'no_build')
+    if (!bundle && timedOut) throw friendlyError(failure)
     if (!bundle) {
       const diagnostics = workspace.lastDiagnostics
       const problems = diagnostics.length ? diagnostics : ['The previous attempt stopped before producing a successful build.']

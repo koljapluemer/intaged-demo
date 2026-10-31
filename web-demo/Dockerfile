@@ -15,7 +15,11 @@ ENV NODE_ENV=production
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+# widget-base holds the packages generated widgets import without an install at generation time.
+COPY widget-base/package.json widget-base/package-lock.json ./widget-base/
+RUN npm ci --omit=dev \
+    && npm ci --prefix widget-base --ignore-scripts --no-audit --no-fund \
+    && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 USER node
