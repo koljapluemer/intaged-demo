@@ -71,11 +71,12 @@ function addId(block: WidgetBlock, blockId: string) {
   view.dispatch({ changes: withBlockId(block, blockId) })
 }
 
-function generate(block: WidgetBlock, errors?: string[]) {
+function generate(block: WidgetBlock, { errors, fresh = false }: { errors?: string[]; fresh?: boolean } = {}) {
   if (!block.spec) return
   const blockId = block.blockId ?? crypto.randomUUID()
   if (!block.blockId) addId(block, blockId)
-  const previousRevision = block.blockId ? selectedRevision(block.blockId) : undefined
+  // Without a previous revision the agent starts from the placeholder workspace; older revisions stay in the history.
+  const previousRevision = block.blockId && !fresh ? selectedRevision(block.blockId) : undefined
   void runGeneration({ documentId: props.documentId, blockId, spec: block.spec, previousRevision, errors }, (value) => generated(blockId, value))
 }
 

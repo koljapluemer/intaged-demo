@@ -1,6 +1,6 @@
 import { EditorState, RangeSet, StateEffect, StateField, type Extension, type Range, type Transaction } from '@codemirror/state'
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
-import { createApp, h, ref, shallowReactive, type App, type Component, type Ref } from 'vue'
+import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
+import { createApp, h, shallowReactive, type App, type Component } from 'vue'
 import WidgetCard from '../components/WidgetCard.vue'
 import WidgetControls from '../components/WidgetControls.vue'
 import { findWidgetBlocks, type WidgetBlock, type WidgetMode } from '../widgetBlocks'
@@ -12,7 +12,7 @@ export const setWidgetMode = StateEffect.define<{ key: string; mode: WidgetMode 
 interface WidgetOptions {
   getRevision: (blockId: string) => string | undefined
   getArtifact: (revision: string) => WidgetArtifact | null | undefined
-  onGenerate: (block: WidgetBlock, errors?: string[]) => void
+  onGenerate: (block: WidgetBlock, options?: { errors?: string[]; fresh?: boolean }) => void
 }
 
 export function widgetKey(block: WidgetBlock) {
@@ -21,15 +21,6 @@ export function widgetKey(block: WidgetBlock) {
 
 function sameBlock(a: WidgetBlock, b: WidgetBlock) {
   return a.from === b.from && a.to === b.to && a.blockId === b.blockId && a.spec === b.spec
-}
-
-// Hover is purely visual, so it lives in a Vue ref instead of editor state: no transaction per mouse move.
-const hoveredWidgets = new WeakMap<EditorView, Ref<string | null>>()
-
-function hoveredWidget(view: EditorView) {
-  let hovered = hoveredWidgets.get(view)
-  if (!hovered) hoveredWidgets.set(view, (hovered = ref(null)))
-  return hovered
 }
 
 // Vue apps survive spec edits, so the iframe is not reloaded on every keystroke.
@@ -100,8 +91,6 @@ class ControlsWidget extends VueWidget {
       spec: this.block.spec,
       artifact: this.artifact,
       mode: this.mode,
-      hoveredKey: hoveredWidget(view),
-      widgetKey: widgetKey(this.block),
       onMode: (mode: WidgetMode) => {
         // Keep the cursor out of spec text that is about to be hidden.
         const { head } = view.state.selection.main
@@ -111,7 +100,7 @@ class ControlsWidget extends VueWidget {
           selection: hidesCursor ? { anchor: Math.min(this.block.to + 1, view.state.doc.length) } : undefined,
         })
       },
-      onGenerate: () => this.options.onGenerate(this.block),
+      onGenerate: (fresh: boolean) => this.options.onGenerate(this.block, { fresh }),
     }
   }
 }
@@ -143,7 +132,7 @@ class CardWidget extends VueWidget {
     return {
       blockId: this.block.blockId,
       artifact: this.artifact,
-      onRegenerate: (errors: string[]) => this.options.onGenerate(this.block, errors),
+      onRegenerate: (errors: string[]) => this.options.onGenerate(this.block, { errors }),
     }
   }
 }
@@ -241,26 +230,5 @@ export function widgetDecorations(options: WidgetOptions): Extension {
       EditorState.changeFilter.of((transaction) => protectedFences(transaction, value)),
     ],
   })
-  // Listens on the editor element directly: CodeMirror's own handlers skip events inside widgets.
-  const hover = ViewPlugin.define((view) => {
-    const hovered = hoveredWidget(view)
-    const setHovered = (key: string | null) => {
-      hovered.value = key
-    }
-    const onMove = (event: MouseEvent) => {
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-      const block = pos === null ? undefined : view.state.field(field).blocks.find((candidate) => candidate.from <= pos && pos <= candidate.to)
-      setHovered(block ? widgetKey(block) : null)
-    }
-    const onLeave = () => setHovered(null)
-    view.dom.addEventListener('mousemove', onMove)
-    view.dom.addEventListener('mouseleave', onLeave)
-    return {
-      destroy() {
-        view.dom.removeEventListener('mousemove', onMove)
-        view.dom.removeEventListener('mouseleave', onLeave)
-      },
-    }
-  })
-  return [widgetUi, field, hover]
+  return [widgetUi, field]
 }
