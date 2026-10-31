@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import type { GenerationJob, WidgetArtifact, WidgetBundle } from './types'
 
 export interface GenerateWidgetInput {
@@ -55,7 +56,7 @@ export async function generateWidget(input: GenerateWidgetInput, onProgress: (st
       unreachableSince = null
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
-        if (restarted) throw new Error('The server restarted during generation. Please try again.')
+        if (restarted) throw new Error(t('widget.serverRestarted'))
         restarted = true
         onProgress('Restarting')
         job = await startGeneration(input)
@@ -65,7 +66,7 @@ export async function generateWidget(input: GenerateWidgetInput, onProgress: (st
       if (error instanceof HttpError && error.status < 500) throw error
       unreachableSince ??= Date.now()
       if (Date.now() - unreachableSince > RECONNECT_WINDOW_MS) {
-        throw new Error('Lost connection to the server. Check your connection and try again.')
+        throw new Error(t('widget.connectionLost'))
       }
       onProgress('Reconnecting')
     }

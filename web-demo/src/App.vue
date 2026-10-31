@@ -5,12 +5,15 @@ import { onMounted, ref, shallowRef } from 'vue'
 import { captureAdminLink, clearAdminToken, readAdminToken } from './admin'
 import { HttpError, registerDocument } from './api'
 import DocumentView from './components/DocumentView.vue'
-import { documentIdFromUrl, documentUrlFromId, NEW_DOCUMENT } from './document'
+import LocaleToggle from './components/LocaleToggle.vue'
+import { documentIdFromUrl, documentUrlFromId, NEW_DOCUMENT, titleFromMarkdown } from './document'
+import { syncLocale, t, withLocale } from './i18n'
 import { readRecentDocuments, rememberDocument, type RecentDocument } from './recentDocs'
 import { repo } from './repo'
 import type { TheadocDocument } from './types'
 
 captureAdminLink()
+syncLocale()
 
 const adminToken = ref(readAdminToken())
 const handle = shallowRef<DocHandle<TheadocDocument> | null>(null)
@@ -31,8 +34,8 @@ async function openDocument(id: string, push = true) {
     await next.whenReady()
     handle.value = next
     documentId.value = id
-    if (push) history.pushState({}, '', `/d/${encodeURIComponent(id)}`)
-    updateRecent(next.doc().markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || 'Untitled')
+    if (push) history.pushState({}, '', withLocale(`/d/${encodeURIComponent(id)}`))
+    updateRecent(titleFromMarkdown(next.doc().markdown))
     // Opening a document as admin registers it, which also covers documents created before registration.
     if (adminToken.value) void registerDocument(id, adminToken.value).catch(() => undefined)
   } catch (reason) {
@@ -46,7 +49,10 @@ async function createDocument() {
   if (!adminToken.value) return
   loading.value = true
   error.value = null
-  const next = repo.create<TheadocDocument>(structuredClone(NEW_DOCUMENT))
+  const next = repo.create<TheadocDocument>({
+    ...structuredClone(NEW_DOCUMENT),
+    markdown: `# ${t('app.untitled')}\n\n${t('app.startWriting')}\n`,
+  })
   const id = documentIdFromUrl(next.url)
   try {
     await registerDocument(id, adminToken.value)
@@ -54,7 +60,7 @@ async function createDocument() {
     if (reason instanceof HttpError && reason.status === 401) {
       clearAdminToken()
       adminToken.value = null
-      error.value = 'Admin token was rejected.'
+      error.value = t('app.adminRejected')
     } else {
       error.value = reason instanceof Error ? reason.message : String(reason)
     }
@@ -65,8 +71,8 @@ async function createDocument() {
   }
   handle.value = next
   documentId.value = id
-  history.pushState({}, '', `/d/${encodeURIComponent(id)}`)
-  updateRecent('Untitled')
+  history.pushState({}, '', withLocale(`/d/${encodeURIComponent(id)}`))
+  updateRecent(t('app.untitled'))
 }
 
 function updateRecent(title: string) {
@@ -76,7 +82,7 @@ function updateRecent(title: string) {
 }
 
 function openLink() {
-  const value = window.prompt('Paste a theadoc link or document ID')?.trim()
+  const value = window.prompt(t('app.pasteLink'))?.trim()
   if (!value) return
   try {
     const url = new URL(value, location.origin)
@@ -126,7 +132,7 @@ onMounted(() => {
             theadoc
           </h1>
           <p class="mt-2 text-base-content/60">
-            Collaborative documents with generated widgets.
+            {{ t('app.tagline') }}
           </p>
           <div
             v-if="error"
@@ -142,14 +148,14 @@ onMounted(() => {
               :disabled="loading"
               @click="createDocument"
             >
-              <FilePlus2 :size="17" /> New document
+              <FilePlus2 :size="17" /> {{ t('app.newDocument') }}
             </button>
             <button
               class="btn btn-ghost"
               :disabled="loading"
               @click="openLink"
             >
-              <Link2 :size="17" /> Open link
+              <Link2 :size="17" /> {{ t('app.openLink') }}
             </button>
           </div>
         </div>
@@ -167,7 +173,7 @@ onMounted(() => {
           <button
             v-if="adminToken"
             class="btn btn-square btn-primary btn-sm"
-            title="New document"
+            :title="t('app.newDocument')"
             :disabled="loading"
             @click="createDocument"
           >
@@ -190,15 +196,18 @@ onMounted(() => {
           v-if="!recent.length"
           class="px-2 py-4 text-sm opacity-50"
         >
-          No recent documents
+          {{ t('app.noRecent') }}
         </p>
         <div class="flex-1" />
         <button
           class="btn btn-ghost btn-sm justify-start"
           @click="openLink"
         >
-          <Link2 :size="16" /> Open shared link
+          <Link2 :size="16" /> {{ t('app.openSharedLink') }}
         </button>
+        <div class="flex justify-end px-2 pt-2">
+          <LocaleToggle />
+        </div>
       </div>
     </aside>
   </div>

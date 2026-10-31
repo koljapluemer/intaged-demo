@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { WidgetArtifact } from '../types'
 import { buildWidgetDocument, isWidgetMessage } from '../widgetFrame'
+import { t } from '../i18n'
 
 const props = defineProps<{ artifact: WidgetArtifact }>()
 const emit = defineEmits<{ error: [message: string] }>()
@@ -36,7 +37,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onMessage))
     ref="frame"
     sandbox="allow-scripts"
     :srcdoc="srcdoc"
-    title="Generated widget"
+    :title="t('widget.frameTitle')"
     class="block w-full rounded-box"
     :style="{ height: `${height}px` }"
   />

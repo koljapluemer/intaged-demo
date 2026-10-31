@@ -5,7 +5,9 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { titleFromMarkdown } from '../document'
 import { downloadBundle } from '../exportBundle'
 import type { TheadocDocument } from '../types'
+import { shareUrl, t } from '../i18n'
 import DocumentReader from './DocumentReader.vue'
+import LocaleToggle from './LocaleToggle.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: string }>()
@@ -25,7 +27,7 @@ props.handle.on('change', onChange)
 onBeforeUnmount(() => props.handle.off('change', onChange))
 
 async function copyLink() {
-  await navigator.clipboard.writeText(location.href)
+  await navigator.clipboard.writeText(shareUrl())
   copied.value = true
   window.setTimeout(() => (copied.value = false), 1500)
 }
@@ -55,7 +57,7 @@ async function exportDocument() {
       </h1>
       <button
         class="btn btn-ghost btn-sm"
-        :title="reading ? 'Edit document' : 'Read document'"
+        :title="reading ? t('document.editDocument') : t('document.readDocument')"
         @click="reading = !reading"
       >
         <PencilLine
@@ -66,11 +68,11 @@ async function exportDocument() {
           v-else
           :size="16"
         />
-        <span class="hidden sm:inline">{{ reading ? 'Edit' : 'Read' }}</span>
+        <span class="hidden sm:inline">{{ reading ? t('document.edit') : t('document.read') }}</span>
       </button>
       <button
         class="btn btn-ghost btn-sm"
-        title="Copy edit link"
+        :title="t('document.copyLink')"
         @click="copyLink"
       >
         <Check
@@ -81,12 +83,12 @@ async function exportDocument() {
           v-else
           :size="16"
         />
-        <span class="hidden sm:inline">{{ copied ? 'Copied' : 'Share' }}</span>
+        <span class="hidden sm:inline">{{ copied ? t('document.copied') : t('document.share') }}</span>
       </button>
       <button
         class="btn btn-ghost btn-sm"
         :disabled="exporting"
-        title="Export portable bundle"
+        :title="t('document.exportBundle')"
         @click="exportDocument"
       >
         <span
@@ -97,8 +99,9 @@ async function exportDocument() {
           v-else
           :size="16"
         />
-        <span class="hidden sm:inline">Export</span>
+        <span class="hidden sm:inline">{{ t('document.export') }}</span>
       </button>
+      <LocaleToggle class="ml-1" />
     </header>
     <div
       v-if="exportError"

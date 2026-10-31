@@ -5,6 +5,7 @@ import type { TheadocDocument } from '../types'
 import { cachedArtifact, loadArtifact } from '../widgetArtifacts'
 import { splitWidgetBlocks } from '../widgetBlocks'
 import WidgetFrame from './WidgetFrame.vue'
+import { t } from '../i18n'
 
 const props = defineProps<{ document: TheadocDocument }>()
 // Raw HTML stays disabled: documents are editable by anyone holding the link.
@@ -50,7 +51,7 @@ watchEffect(() => {
             v-else
             class="flex h-24 items-center justify-center rounded-box border-2 border-dashed border-base-300 text-sm opacity-50"
           >
-            {{ segment.artifact === undefined ? 'Loading widget…' : segment.revision ? 'Widget unavailable' : 'Not generated yet' }}
+            {{ segment.artifact === undefined ? t('widget.loading') : segment.revision ? t('widget.unavailable') : t('widget.notGenerated') }}
           </div>
         </div>
       </template>

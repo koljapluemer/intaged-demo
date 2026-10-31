@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { sha256, WIDGET_MODES, type WidgetMode } from '../widgetBlocks'
 import { generation } from '../widgetGeneration'
 import type { WidgetArtifact } from '../types'
+import { stageLabel, t } from '../i18n'
 
 const props = defineProps<{
   blockId: string | null
@@ -15,7 +16,6 @@ const emit = defineEmits<{
   generate: [fresh: boolean]
 }>()
 
-const labels: Record<WidgetMode, string> = { spec: 'Spec', rendered: 'Rendered', split: 'Split' }
 const currentHash = ref('')
 // Which button started the running generation, so only that one shows the spinner.
 const started = ref<boolean | null>(null)
@@ -23,9 +23,9 @@ const busy = computed(() => Boolean(generation(props.blockId)?.busy))
 const error = computed(() => generation(props.blockId)?.error)
 const stale = computed(() => Boolean(props.artifact && currentHash.value && props.artifact.specHash !== currentHash.value))
 const status = computed(() => {
-  if (busy.value) return `${generation(props.blockId)?.stage ?? 'Rendering'}…`
-  if (error.value) return `Render failed: ${error.value}`
-  if (stale.value) return 'Out of date with the spec'
+  if (busy.value) return stageLabel(generation(props.blockId)?.stage)
+  if (error.value) return t('widget.renderFailed', { error: error.value })
+  if (stale.value) return t('widget.outOfDate')
   return undefined
 })
 
@@ -60,13 +60,13 @@ function generate(fresh: boolean) {
           v-if="busy && started === false"
           class="loading loading-spinner loading-xs"
         />
-        {{ artifact ? 'Generate new version' : 'Generate' }}
+        {{ artifact ? t('widget.generateNewVersion') : t('widget.generate') }}
       </button>
       <button
         v-if="artifact"
         class="btn btn-ghost btn-xs"
         :disabled="busy || !spec"
-        :title="status ?? 'Discard the current code and generate from the spec alone'"
+        :title="status ?? t('widget.regenerateHint')"
         @mousedown.prevent
         @click="generate(true)"
       >
@@ -74,7 +74,7 @@ function generate(fresh: boolean) {
           v-if="busy && started === true"
           class="loading loading-spinner loading-xs"
         />
-        Regenerate from scratch
+        {{ t('widget.regenerateFromScratch') }}
       </button>
     </div>
     <div
@@ -91,7 +91,7 @@ function generate(fresh: boolean) {
         @mousedown.prevent
         @click="emit('mode', option)"
       >
-        {{ labels[option] }}
+        {{ t(`widget.modes.${option}`) }}
       </button>
     </div>
   </div>

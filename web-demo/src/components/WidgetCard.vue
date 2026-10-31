@@ -3,6 +3,7 @@ import { TriangleAlert } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { generation } from '../widgetGeneration'
 import type { WidgetArtifact } from '../types'
+import { stageLabel, t } from '../i18n'
 import WidgetFrame from './WidgetFrame.vue'
 
 const props = defineProps<{
@@ -15,7 +16,7 @@ const runtimeErrors = ref<string[]>([])
 const error = computed(() => generation(props.blockId)?.error)
 const stage = computed(() => {
   const current = generation(props.blockId)
-  return current?.busy ? `${current.stage ?? 'Rendering'}…` : null
+  return current?.busy ? stageLabel(current.stage) : null
 })
 
 watch(
@@ -45,7 +46,7 @@ function reportRuntimeError(message: string) {
         {{ stage }}
       </template>
       <template v-else>
-        Not rendered yet
+        {{ t('widget.notRendered') }}
       </template>
     </div>
     <div
@@ -67,7 +68,7 @@ function reportRuntimeError(message: string) {
         @mousedown.prevent
         @click="emit('regenerate', [])"
       >
-        Try again
+        {{ t('widget.tryAgain') }}
       </button>
     </div>
   </div>

@@ -1,4 +1,5 @@
 import type { AutomergeUrl, DocHandle } from '@automerge/automerge-repo'
+import { t } from './i18n'
 import type { TheadocDocument } from './types'
 
 export const NEW_DOCUMENT: TheadocDocument = {
@@ -17,7 +18,7 @@ export function documentUrlFromId(id: string): AutomergeUrl {
 
 export function titleFromMarkdown(markdown: string): string {
   const match = markdown.match(/^#\s+(.+)$/m)
-  return match?.[1]?.trim() || 'Untitled'
+  return match?.[1]?.trim() || t('app.untitled')
 }
 
 export function selectRevision(handle: DocHandle<TheadocDocument>, blockId: string, revision: string) {

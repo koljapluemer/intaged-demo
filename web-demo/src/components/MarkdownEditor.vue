@@ -20,6 +20,7 @@ import { findWidgetBlocks, withBlockId, type WidgetBlock } from '../widgetBlocks
 import type { TheadocDocument, WidgetArtifact } from '../types'
 import { cachedArtifact, loadArtifact, storeArtifact } from '../widgetArtifacts'
 import { runGeneration } from '../widgetGeneration'
+import { t } from '../i18n'
 
 const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: string }>()
 const root = ref<HTMLDivElement>()
@@ -104,7 +105,7 @@ function insertWidget() {
   if (!view) return
   const id = crypto.randomUUID()
   const position = view.state.selection.main.from
-  const placeholder = 'Describe the interactive element.'
+  const placeholder = t('editor.widgetPlaceholder')
   const value = `\n\`\`\`intaged id=${id}\n${placeholder}\n\`\`\`\n`
   const anchor = position + value.indexOf(placeholder)
   view.dispatch({ changes: { from: position, insert: value }, selection: { anchor, head: anchor + placeholder.length } })
@@ -161,38 +162,38 @@ defineExpose({ insertWidget })
     <div class="flex min-h-11 items-center gap-1 border-b border-base-300 px-3">
       <button
         class="btn btn-ghost btn-sm font-bold"
-        title="Heading"
+        :title="t('editor.heading')"
         @click="linePrefix('## ')"
       >
         H
       </button>
       <button
         class="btn btn-ghost btn-sm font-bold"
-        title="Bold"
+        :title="t('editor.bold')"
         @click="wrap('**')"
       >
         B
       </button>
       <button
         class="btn btn-ghost btn-sm italic"
-        title="Italic"
+        :title="t('editor.italic')"
         @click="wrap('_')"
       >
         I
       </button>
       <button
         class="btn btn-ghost btn-sm"
-        title="Bullet list"
+        :title="t('editor.bulletList')"
         @click="linePrefix('- ')"
       >
-        • List
+        • {{ t('editor.list') }}
       </button>
       <button
         class="btn btn-ghost btn-sm"
-        title="Insert interactive element"
+        :title="t('editor.insertWidget')"
         @click="insertWidget"
       >
-        Interactive Element
+        {{ t('editor.widget') }}
       </button>
     </div>
     <div class="flex-1 overflow-y-auto">

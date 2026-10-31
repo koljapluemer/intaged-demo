@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { generateWidget, type GenerateWidgetInput } from './api'
+import { t } from './i18n'
 import type { WidgetArtifact } from './types'
 
 interface Generation {
@@ -26,7 +27,7 @@ export async function runGeneration(input: GenerateWidgetInput, onGenerated: (ar
       generations.set(input.blockId, {
         busy: false,
         stage: null,
-        error: `The widget still fails after automatic repair: ${input.errors[0]}`,
+        error: t('widget.stillFails', { error: input.errors[0] }),
       })
       return
     }
