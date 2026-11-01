@@ -46,6 +46,116 @@ export interface GeneratorRoutes {
   fallback?: ModelRoute
 }
 
+interface RunTotals {
+  attempts: number
+  steps: number
+  input: number
+  cached: number
+  output: number
+  reasoning: number
+}
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** Small, console-only trace for a complete generation, including any retry/fallback. */
+class GenerationRunLog {
+  readonly id = randomUUID()
+  private readonly started = Date.now()
+  private readonly totals: RunTotals = { attempts: 0, steps: 0, input: 0, cached: 0, output: 0, reasoning: 0 }
+
+  constructor(input: GenerateInput) {
+    this.write('generation_start', {
+      specChars: input.spec.length,
+      continuation: Boolean(input.previous),
+      reportedErrors: input.errors?.length ?? 0,
+    })
+  }
+
+  attempt(model: string) {
+    this.totals.attempts++
+    this.write('generation_attempt_start', { attempt: this.totals.attempts, model })
+    return this.totals.attempts
+  }
+
+  step(attempt: number, model: string, step: StepResult<WidgetTools>) {
+    const { usage, performance } = step
+    const tokens = {
+      input: usage.inputTokens ?? 0,
+      cached: usage.inputTokenDetails.cacheReadTokens ?? 0,
+      output: usage.outputTokens ?? 0,
+      reasoning: usage.outputTokenDetails.reasoningTokens ?? 0,
+    }
+    this.totals.steps++
+    this.totals.input += tokens.input
+    this.totals.cached += tokens.cached
+    this.totals.output += tokens.output
+    this.totals.reasoning += tokens.reasoning
+    const resultByCall = new Map(step.toolResults.map((result) => [result.toolCallId, result.output]))
+    this.write('generation_step', {
+      attempt,
+      model,
+      step: step.stepNumber,
+      ms: performance.stepTimeMs,
+      modelMs: performance.responseTimeMs,
+      finishReason: step.finishReason,
+      tools: step.toolCalls.map((call) => ({
+        name: call.toolName,
+        ms: performance.toolExecutionMs[call.toolCallId] ?? 0,
+        ...toolOutcome(resultByCall.get(call.toolCallId)),
+      })),
+      ...tokens,
+    })
+  }
+
+  attemptEnd(attempt: number, model: string, started: number, outcome: string, error?: unknown) {
+    this.write('generation_attempt_end', {
+      attempt,
+      model,
+      outcome,
+      ms: Date.now() - started,
+      ...(error === undefined ? {} : { error: errorMessage(error) }),
+    })
+  }
+
+  retry(error: GenerationError, from: string, to: string) {
+    this.write('generation_retry', {
+      reason: error.message,
+      status: error.status,
+      from,
+      to,
+      problems: error.retry?.problems.slice(0, 5) ?? [],
+    })
+  }
+
+  end(outcome: 'ok' | 'error', details: object) {
+    this.write('generation_end', { outcome, ms: Date.now() - this.started, reloops: this.totals.attempts - 1, ...this.totals, ...details })
+  }
+
+  private write(event: string, details: object) {
+    console.log(JSON.stringify({ event, runId: this.id, ...details }))
+  }
+}
+
+function toolOutcome(output: unknown): object {
+  if (typeof output === 'string') {
+    return output.startsWith('Error:')
+      ? { outcome: 'error', error: output.slice(0, 500) }
+      : { outcome: 'ok', result: { chars: output.length } }
+  }
+  if (Array.isArray(output)) return { outcome: 'ok', result: { items: output.length } }
+  if (output && typeof output === 'object') {
+    const result = output as Record<string, unknown>
+    if (result.ok === false) {
+      return { outcome: 'error', error: Array.isArray(result.diagnostics) ? result.diagnostics.slice(0, 5) : 'Tool failed' }
+    }
+    const summary = Object.fromEntries(
+      ['ok', 'bytes', 'added', 'removed', 'network', 'delivered'].flatMap((key) => (key in result ? [[key, result[key]]] : [])),
+    )
+    return { outcome: 'ok', ...(Object.keys(summary).length ? { result: summary } : {}) }
+  }
+  return { outcome: output === undefined ? 'missing' : 'ok' }
+}
+
 export function hashSpec(spec: string) {
   return createHash('sha256').update(spec.trim()).digest('hex')
 }
@@ -137,17 +247,29 @@ export class WidgetGenerator {
   /** Runs the agent, and once more from where it left off if the first attempt fails in a recoverable way. */
   async generate(input: GenerateInput): Promise<GenerateResult> {
     if (!this.routes) throw new GenerationError('OPENROUTER_API_KEY is not configured', 503)
+    const log = new GenerationRunLog(input)
     // One OpenRouter session per generation keeps every OpenRouter step on the same provider for prompt-cache hits.
     const sessionId = randomUUID()
     try {
-      return await this.attempt(input, sessionId, this.routes.primary)
+      const result = await this.generateWithRetry(input, sessionId, log)
+      log.end('ok', { model: result.model, bundle: result.bundle })
+      return result
+    } catch (error) {
+      log.end('error', { error: errorMessage(error) })
+      throw error
+    }
+  }
+
+  private async generateWithRetry(input: GenerateInput, sessionId: string, log: GenerationRunLog) {
+    try {
+      return await this.attempt(input, sessionId, this.routes!.primary, log)
     } catch (error) {
       if (input.signal?.aborted) throw error
       if (!(error instanceof GenerationError) || !error.retry) throw error
-      console.warn(`widget generation attempt failed, retrying: ${error.message}`)
       input.onProgress?.('Fixing problems')
-      const retryRoute = this.routes.fallback ?? this.routes.primary
-      if (error.status === 429 && retryRoute === this.routes.primary) {
+      const retryRoute = this.routes!.fallback ?? this.routes!.primary
+      log.retry(error, this.routes!.primary.label, retryRoute.label)
+      if (error.status === 429 && retryRoute === this.routes!.primary) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
       }
       const result = await this.attempt(
@@ -158,14 +280,15 @@ export class WidgetGenerator {
         },
         sessionId,
         retryRoute,
+        log,
       )
-      return retryRoute === this.routes.primary
+      return retryRoute === this.routes!.primary
         ? result
-        : { ...result, model: `${this.routes.primary.label} -> ${retryRoute.label}` }
+        : { ...result, model: `${this.routes!.primary.label} -> ${retryRoute.label}` }
     }
   }
 
-  private async attempt(input: GenerateInput, sessionId: string, route: ModelRoute): Promise<GenerateResult> {
+  private async attempt(input: GenerateInput, sessionId: string, route: ModelRoute, log: GenerationRunLog): Promise<GenerateResult> {
     const workspace = new Workspace(input.previous)
     let stage = ''
     const progress = (next: string) => {
@@ -174,34 +297,9 @@ export class WidgetGenerator {
       input.onProgress?.(next)
     }
 
-    // One JSON line per step and per run, to see where time and tokens go (`just logs`).
+    // One compact JSON line per event makes local logs greppable without a telemetry service.
     const runStart = Date.now()
-    let stepStart = runStart
-    const totals = { steps: 0, input: 0, cached: 0, output: 0, reasoning: 0 }
-    const logStep = (step: StepResult<WidgetTools>) => {
-      const { usage } = step
-      const tokens = {
-        input: usage.inputTokens ?? 0,
-        cached: usage.inputTokenDetails.cacheReadTokens ?? 0,
-        output: usage.outputTokens ?? 0,
-        reasoning: usage.outputTokenDetails.reasoningTokens ?? 0,
-      }
-      totals.steps += 1
-      totals.input += tokens.input
-      totals.cached += tokens.cached
-      totals.output += tokens.output
-      totals.reasoning += tokens.reasoning
-      console.log(
-        JSON.stringify({
-          event: 'generation_step',
-          model: route.label,
-          step: step.stepNumber,
-          tools: step.toolCalls.map((call) => call.toolName),
-          ms: Date.now() - stepStart,
-          ...tokens,
-        }),
-      )
-    }
+    const attempt = log.attempt(route.label)
 
     const finished: StopCondition<WidgetTools> = () => workspace.finished
     const overBudget: StopCondition<WidgetTools> = ({ steps }) =>
@@ -217,16 +315,8 @@ export class WidgetGenerator {
         ({ openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } } satisfies ProviderOptions),
       stopWhen: [isStepCount(config.maxAgentSteps), finished, overBudget],
       onToolExecutionStart: ({ toolCall }) => progress(stageFor(toolCall.toolName)),
-      onStepStart: () => {
-        stepStart = Date.now()
-      },
-      onStepEnd: logStep,
+      onStepEnd: (step) => log.step(attempt, route.label, step),
     })
-
-    const logRun = (outcome: string) =>
-      console.log(
-        JSON.stringify({ event: 'generation_run', model: route.label, outcome, ms: Date.now() - runStart, ...totals }),
-      )
 
     progress('Planning')
     let failure: unknown = null
@@ -241,8 +331,8 @@ export class WidgetGenerator {
     }
     const timedOut = failure !== null && isTimeout(failure) && !input.signal?.aborted
     if (failure !== null && !timedOut) {
-      logRun('error')
       const error = friendlyError(failure)
+      log.attemptEnd(attempt, route.label, runStart, 'error', error)
       if (input.signal?.aborted || !error.retry) throw error
       throw new GenerationError(error.message, error.status, {
         source: workspace.source,
@@ -255,7 +345,7 @@ export class WidgetGenerator {
       workspace.recordBuild(await this.bundler.build(workspace.source))
     }
     const bundle = workspace.currentBundle
-    logRun(bundle ? (timedOut ? 'timeout_salvaged' : 'ok') : timedOut ? 'timeout' : 'no_build')
+    log.attemptEnd(attempt, route.label, runStart, bundle ? (timedOut ? 'timeout_salvaged' : 'ok') : timedOut ? 'timeout' : 'no_build')
     if (!bundle && timedOut) {
       const error = friendlyError(failure)
       throw new GenerationError(error.message, error.status, {

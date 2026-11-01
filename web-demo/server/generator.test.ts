@@ -188,6 +188,33 @@ describe('WidgetGenerator', () => {
     expect(result.model).toBe('google/gemini-test')
   })
 
+  it('logs a correlated summary across steps and fallback retries', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { generator } = await createRoutedGenerator(
+      [toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const = broken' }] }]), giveUp],
+      [toolStep(['edit_files', { edits: [{ path: 'main.ts', old_text: 'const = broken', new_text: 'const fixed = 1' }] }])],
+    )
+
+    await generator.generate({ spec: 'trace this repair' })
+
+    const events = output.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+    expect(new Set(events.map((event) => event.runId)).size).toBe(1)
+    expect(events.map((event) => event.event)).toEqual(
+      expect.arrayContaining(['generation_start', 'generation_step', 'generation_retry', 'generation_end']),
+    )
+    expect(events.find((event) => event.event === 'generation_retry')).toMatchObject({
+      from: 'google/gemini-test',
+      to: 'openrouter/fallback-test',
+    })
+    expect(events.at(-1)).toMatchObject({ event: 'generation_end', outcome: 'ok', attempts: 2, reloops: 1 })
+
+    const failedTool = events
+      .filter((event) => event.event === 'generation_step')
+      .flatMap((event) => event.tools as Array<Record<string, unknown>>)
+      .find((tool) => tool.outcome === 'error')
+    expect(failedTool).toMatchObject({ name: 'write_files', outcome: 'error' })
+  })
+
   it('does not call the fallback after caller cancellation', async () => {
     const { generator, fallback } = await createRoutedGenerator([giveUp], [giveUp])
     const controller = new AbortController()
