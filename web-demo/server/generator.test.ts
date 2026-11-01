@@ -65,7 +65,7 @@ async function createGenerator(steps: LanguageModelV4GenerateResult[]) {
   const model = new MockLanguageModelV4({ doGenerate: steps })
   return {
     generator: new WidgetGenerator(bundler, new PackageRegistry(), {
-      primary: { model, label: 'test/primary' },
+      primaries: [{ model, label: 'test/primary' }],
     }),
     model,
   }
@@ -86,11 +86,13 @@ async function createRoutedGenerator(
   const fallback = new MockLanguageModelV4({ doGenerate: fallbackSteps })
   return {
     generator: new WidgetGenerator(bundler, new PackageRegistry(), {
-      primary: {
-        model: primary,
-        label: 'google/gemini-test',
-        providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } },
-      },
+      primaries: [
+        {
+          model: primary,
+          label: 'google/gemini-test',
+          providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } },
+        },
+      ],
       fallback: {
         model: fallback,
         label: 'openrouter/fallback-test',
@@ -192,6 +194,11 @@ describe('WidgetGenerator', () => {
     expect(primary.doGenerateCalls[0].providerOptions).not.toHaveProperty('openrouter')
     expect(fallback.doGenerateCalls[0].providerOptions).toHaveProperty('openrouter')
     expect(fallback.doGenerateCalls[0].providerOptions).not.toHaveProperty('google')
+    // One OpenRouter session per generation, added to the route's own options.
+    expect(fallback.doGenerateCalls[0].providerOptions?.openrouter).toMatchObject({
+      reasoning: { effort: 'low' },
+      session_id: expect.any(String),
+    })
     expect(result.source.files['main.ts']).toBe('const fixed = 1')
     expect(result.model).toBe('google/gemini-test -> openrouter/fallback-test')
   })
@@ -223,7 +230,14 @@ describe('WidgetGenerator', () => {
       expect.arrayContaining(['generation_start', 'generation_step', 'generation_retry', 'generation_end']),
     )
     const start = events.find((event) => event.event === 'generation_start')!
-    expect(start).toMatchObject({ primary: 'google/gemini-test', fallback: 'openrouter/fallback-test' })
+    expect(start).toMatchObject({
+      primaries: ['google/gemini-test'],
+      fallback: 'openrouter/fallback-test',
+      routeOptions: {
+        'google/gemini-test': { maxRetries: 2, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } } },
+        'openrouter/fallback-test': { maxRetries: 2, providerOptions: { openrouter: { reasoning: { effort: 'low' } } } },
+      },
+    })
     expect(start.settingsHash).toMatch(/^[0-9a-f]{12}$/)
     expect(start.specHash).toMatch(/^[0-9a-f]{64}$/)
     expect(JSON.stringify(start)).not.toContain('trace this repair')
@@ -273,7 +287,7 @@ describe('WidgetGenerator', () => {
         throw unavailable
       },
     })
-    const generator = new WidgetGenerator(bundler, new PackageRegistry(), { primary: { model: busy, label: 'test/busy' } })
+    const generator = new WidgetGenerator(bundler, new PackageRegistry(), { primaries: [{ model: busy, label: 'test/busy' }] })
 
     await expect(generator.generate({ spec: 'busy' })).rejects.toThrow()
 
@@ -308,7 +322,7 @@ describe('WidgetGenerator', () => {
     }
   })
 
-  it('pauses a rate-limited primary and sends later runs straight to the fallback', async () => {
+  it('walks the Gemini chain as models run out of quota, and uses the fallback when all are paused', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     output.mockClear()
     const root = await mkdtemp(path.join(os.tmpdir(), 'theadoc-generator-'))
@@ -318,28 +332,54 @@ describe('WidgetGenerator', () => {
       npmCache: path.join(root, 'npm-cache'),
     })
     await bundler.initialize()
-    const primary = new MockLanguageModelV4({
+    const write = (content: string) => toolStep(['write_files', { files: [{ path: 'main.ts', content }] }])
+    const flash = new MockLanguageModelV4({
       doGenerate: async () => {
         throw dailyQuotaExceeded()
       },
     })
-    const write = (content: string) => toolStep(['write_files', { files: [{ path: 'main.ts', content }] }])
-    const fallback = new MockLanguageModelV4({ doGenerate: [write('const first = 1'), write('const second = 2')] })
+    let liteCalls = 0
+    const lite = new MockLanguageModelV4({
+      doGenerate: async () => {
+        if (liteCalls++ === 0) return write('const lite = 1')
+        throw dailyQuotaExceeded()
+      },
+    })
+    const fallback = new MockLanguageModelV4({
+      doGenerate: [write('const a = 1'), write('const b = 2'), write('const c = 3')],
+    })
     const generator = new WidgetGenerator(bundler, new PackageRegistry(), {
-      primary: { model: primary, label: 'google/gemini-test', maxRetries: 0 },
+      primaries: [
+        { model: flash, label: 'google/flash-test', maxRetries: 0 },
+        { model: lite, label: 'google/lite-test', maxRetries: 0 },
+      ],
       fallback: { model: fallback, label: 'openrouter/fallback-test' },
     })
 
-    const first = await generator.generate({ spec: 'first' })
-    const second = await generator.generate({ spec: 'second' })
+    const models = []
+    for (const spec of ['one', 'two', 'three', 'four']) models.push((await generator.generate({ spec })).model)
 
-    // maxRetries 0: one request, no silent SDK retries; the second run never touches the primary.
-    expect(primary.doGenerateCalls).toHaveLength(1)
-    expect(first.model).toBe('google/gemini-test -> openrouter/fallback-test')
-    expect(second.model).toBe('openrouter/fallback-test')
+    expect(models).toEqual([
+      // A failed attempt retries once on the fallback, never on the next Gemini model.
+      'google/flash-test -> openrouter/fallback-test',
+      'google/lite-test',
+      'google/lite-test -> openrouter/fallback-test',
+      'openrouter/fallback-test',
+    ])
+    // maxRetries 0: one request per quota error, and paused models get no requests at all.
+    expect(flash.doGenerateCalls).toHaveLength(1)
+    expect(lite.doGenerateCalls).toHaveLength(2)
     const events = output.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
-    expect(events.find((event) => event.event === 'route_paused')).toMatchObject({ model: 'google/gemini-test', pauseMs: 3_600_000 })
-    expect(events.find((event) => event.event === 'route_skipped')).toMatchObject({ model: 'google/gemini-test', runId: second.runId })
+    expect(events.filter((event) => event.event === 'route_paused').map((event) => [event.model, event.pauseMs])).toEqual([
+      ['google/flash-test', 3_600_000],
+      ['google/lite-test', 3_600_000],
+    ])
+    expect(events.filter((event) => event.event === 'route_skipped').map((event) => event.model)).toEqual([
+      'google/flash-test',
+      'google/flash-test',
+      'google/flash-test',
+      'google/lite-test',
+    ])
   })
 
   it('derives the rate-limit pause from the quota error', () => {

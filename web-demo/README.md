@@ -37,9 +37,11 @@ Known gaps, accepted for a demo:
 
 Use a dedicated inference key rather than a management key. Create it in OpenRouter with a fixed USD limit and no reset; `$10` is the suggested demo ceiling. The application additionally limits concurrent generations and queues ten.
 
-OpenRouter is always the reliable fallback. Its default model is `openai/gpt-5.6-terra`; override it with `OPENROUTER_MODEL`, using a model that supports tool calling.
+The models are defined in code, in [`server/models.ts`](server/models.ts): which ones, in what order, and their settings (thinking level, reasoning effort, retries). `.env` only holds the API keys that make a provider available. A model change is therefore a commit, identical locally and on the server, and gets a new `settingsHash` in the run log.
 
-Set `GOOGLE_GENERATIVE_AI_API_KEY` to use the Gemini Developer API directly before OpenRouter. The default, `gemini-3.7-flash`, is a stable free-tier model designed for coding and agentic tool use. Override it with `GOOGLE_GENERATIVE_AI_MODEL`; it must support function calling. A clean Gemini build is delivered directly. Quota, provider, timeout, malformed-tool and unsuccessful-build failures retry once on OpenRouter, continuing from Gemini's latest workspace.
+OpenRouter (`openai/gpt-5.6-terra`, reasoning effort `low`) is always the reliable fallback, and the only model when no Gemini key is set.
+
+Set `GOOGLE_GENERATIVE_AI_API_KEY` to use the Gemini Developer API directly before OpenRouter. Free-tier quotas are per model, so the generator works through a chain: `gemini-3.8-flash`, `gemini-3.6-flash` (20 requests/day each in November 2026), then `gemini-3.5-flash-lite` and `gemini-3.1-flash-lite` (500/day each). Each run uses the first model that is not paused after a 429. `gemini-3.7-flash` is left out because it counts against the `gemini-3.8-flash` quota. Current limits are in AI Studio's rate-limit page. A clean Gemini build is delivered directly. Quota, provider, timeout, malformed-tool and unsuccessful-build failures retry once on OpenRouter, continuing from Gemini's latest workspace.
 
 Gemini free-tier quotas vary by project and are enforced across requests per minute, tokens per minute and requests per day; inspect the active values in [Google AI Studio](https://aistudio.google.com/). Free-tier submissions may be used by Google to improve its products, so enabling it sends widget specifications and existing widget source under those terms. See Google's [pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
 
@@ -59,7 +61,7 @@ The loop is built for few model round trips, because each step costs a full mode
 Packages in [`widget-base/package.json`](widget-base/package.json) (d3, Observable Plot, ECharts, Chart.js, Leaflet, three, lucide, date-fns) are installed into the image and importable without `add_dependency`, including their own dependencies such as `d3-scale`. A successful build records the versions it used in the widget's `deps`, so editing an old widget after the base is upgraded rebuilds against its original versions (installed on demand). To change the set, edit it with `npm install --save-exact --ignore-scripts <pkg>` inside `widget-base/` and rebuild the image; the system prompt lists the set automatically. Locally outside Docker, run `npm ci --prefix widget-base` once.
 
 - Packages are resolved to exact versions from the npm registry and installed with `--ignore-scripts`. Packages below `MIN_WEEKLY_DOWNLOADS` (default 500), deprecated or platform-specific packages are rejected.
-- Each generation is capped at `MAX_AGENT_STEPS` (default 24) model steps and `MAX_AGENT_TOKENS` (default 400000) tokens, plus a five-minute timeout.
+- Each generation is capped at 24 model steps and 400,000 tokens (`maxAgentSteps`, `maxAgentTokens` in `server/config.ts`), plus a five-minute timeout.
 - The container needs outbound HTTPS to `registry.npmjs.org` and `api.npmjs.org`.
 
 ### Measuring and choosing a model
@@ -68,11 +70,11 @@ Every generation writes one JSON line per event, sharing a `runId`, to the conso
 
 | Event | Fields |
 |---|---|
-| `generation_start` | `specChars`, `specHash` (never the spec text), `continuation`, `previousRunId`, `specChanged`, `reportedErrors`, and the settings fingerprint: `generatorVersion`, `primary`, `fallback`, `reasoningEffort`, `googleThinkingLevel`, step/token/timeout limits, `promptHash`, `settingsHash` |
+| `generation_start` | `specChars`, `specHash` (never the spec text), `continuation`, `previousRunId`, `specChanged`, `reportedErrors`, and the settings fingerprint: `generatorVersion`, `primaries`, `fallback`, `routeOptions` (per model: retries, thinking level or reasoning effort), step/token/timeout limits, `promptHash`, `settingsHash` |
 | `model_call` | one raw provider request: `attempt`, `model`, `ms`, `ok`, and on failure `status`, `retryable`, `error`. The AI SDK retries failed requests silently (2 retries, 2s/4s backoff; the Gemini route sets `maxRetries: 0` and fails over instead); each retry is its own `model_call` |
 | `generation_step` | one agent step: `ms`, `modelMs`, `finishReason`, tools with outcome, `input`/`cached`/`output`/`reasoning` tokens, `costUsd` (OpenRouter only) |
 | `generation_retry` | the generator retrying a failed attempt, possibly on the fallback model |
-| `route_paused` / `route_skipped` | the primary (Gemini) returned 429, so it is skipped until `until`: one hour for a daily quota, otherwise Gemini's `retryDelay` or 60s. Later runs log `route_skipped` and go straight to the fallback |
+| `route_paused` / `route_skipped` | a Gemini model returned 429, so it is skipped until `until`: one hour for a daily quota, otherwise Gemini's `retryDelay` or 60s. Later runs log `route_skipped` for it and use the next model in the chain, or OpenRouter when all are paused |
 | `generation_attempt_end` | `outcome`, `ms`, `planningMs` (time until the first tool ran, i.e. how long the UI showed "Planning") |
 | `generation_end` | `outcome`, totals (`attempts`, `modelCalls`, `steps`, tokens, `costUsd`), `model` |
 
@@ -93,19 +95,19 @@ jq -c 'select(.event=="generation_end") | {runId, outcome, reloops, model, costU
 
 What to look for: if `cached` stays near zero on later steps, prompt caching is not working; if `reasoning` dominates `output`, the model thinks more than it writes; if runs take many steps, the time goes to round trips rather than to any single call; several `model_call`s per step mean silent retries. Paid request costs are also in the OpenRouter activity dashboard. Ideas and research for changing the pipeline are collected in [pipeline_ideas.md](pipeline_ideas.md).
 
-Speed settings that need no code change:
+Speed and cost levers, all in `server/models.ts`:
 
-- `OPENROUTER_REASONING_EFFORT` (default `low`; `none`, `minimal`, `low`, `medium`, `high`, `xhigh`). GPT-5.6 models default to `medium` on their own; OpenRouter's [GPT-5.6 migration guide](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/model-migrations/gpt-5-6) recommends trying one level lower, since quality often holds. Raise it if widgets get sloppier.
-- Append `:nitro` to the model (`OPENROUTER_MODEL=openai/gpt-5.6-terra:nitro`) to route to the highest-throughput provider ([provider routing](https://openrouter.ai/docs/guides/routing/provider-selection.md)). This disables load balancing, so compare error rates too.
+- `OPENROUTER_REASONING_EFFORT` (`low`; also `none`, `minimal`, `medium`, `high`, `xhigh`). GPT-5.6 models default to `medium` on their own; OpenRouter's [GPT-5.6 migration guide](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/model-migrations/gpt-5-6) recommends trying one level lower, since quality often holds. Raise it if widgets get sloppier.
+- Appending `:nitro` to the model ID routes to the highest-throughput provider ([provider routing](https://openrouter.ai/docs/guides/routing/provider-selection.md)). This disables load balancing, and the one logged `:nitro` run cost about twice the list price, so it is off.
 - Each generation sends one OpenRouter `session_id` for all its steps and its retry, so they stick to one provider and its prompt cache from the first request ([prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching)).
 - For raw speed, Cerebras on OpenRouter serves `openai/gpt-oss-120b` (and Qwen 3.8 27B) with tool calling at well over 1,000 tokens/s, an order of magnitude above typical GPT endpoints (`:nitro` favors it). Expect plainer designs, so judge it on the same spec set before switching.
 
-Each attempt runs on one model. To compare alternatives, set `GOOGLE_GENERATIVE_AI_MODEL` or `OPENROUTER_MODEL` in `.env`, run `just up`, and generate the same handful of specs (a chart, a map, a form-like interaction, a 3D scene), comparing quality, run time, fallback rate and cost. OpenRouter candidates to try first, all with tool calling (prices per million input/output tokens from OpenRouter's model list on 2026-10-26; the default `openai/gpt-5.6-terra` is $2 / $12):
+Each attempt runs on one model. To compare alternatives, change `server/models.ts`, run `just up`, and generate the same handful of specs (a chart, a map, a form-like interaction, a 3D scene), comparing quality, run time, fallback rate and cost. OpenRouter candidates to try first, all with tool calling (prices per million input/output tokens from OpenRouter's model list on 2026-10-26; the default `openai/gpt-5.6-terra` is $2 / $12):
 
-```sh
-OPENROUTER_MODEL=anthropic/claude-haiku-5.5   # $0.10 / $0.50
-OPENROUTER_MODEL=moonshotai/kimi-k2.7-code    # $0.67 / $3.35
-OPENROUTER_MODEL=x-ai/grok-4.3                # $1.25 / $2.50
+```ts
+const OPENROUTER_MODEL = 'anthropic/claude-haiku-5.5' // $0.10 / $0.50
+const OPENROUTER_MODEL = 'moonshotai/kimi-k2.7-code'  // $0.67 / $3.35
+const OPENROUTER_MODEL = 'x-ai/grok-4.3'              // $1.25 / $2.50
 ```
 
 Anthropic routes on OpenRouter need explicit cache markers, which the generator does not set, so expect `cached` to stay at zero with Haiku. List current IDs and prices with `curl -s https://openrouter.ai/api/v1/models`. If a cheaper model only falls short on hard specs, the next step is splitting per step (cheap model first, current default on the retry) rather than switching back entirely.

@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModelV4CallOptions } from '@ai-sdk/provider'
-import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import {
   APICallError,
   isStepCount,
@@ -17,6 +15,7 @@ import {
 import type { WidgetSource } from '../src/types.js'
 import type { Bundler } from './bundler.js'
 import { config } from './config.js'
+import { createRoutes } from './models.js'
 import type { PackageRegistry } from './packages.js'
 import { GENERATOR_VERSION, systemPrompt } from './prompt.js'
 import { createTools, stageFor, type WidgetTools } from './tools.js'
@@ -53,7 +52,9 @@ export interface ModelRoute {
 }
 
 export interface GeneratorRoutes {
-  primary: ModelRoute
+  /** Tried in order: each run uses the first model that is not paused after a rate limit. */
+  primaries: [ModelRoute, ...ModelRoute[]]
+  /** Takes over failed attempts; also enables pausing rate-limited primaries. */
   fallback?: ModelRoute
 }
 
@@ -258,6 +259,12 @@ export class GenerationError extends Error {
   }
 }
 
+/** One OpenRouter session per generation keeps all its OpenRouter steps on one provider, for prompt-cache hits. */
+function withSession(options: ProviderOptions | undefined, sessionId: string): ProviderOptions | undefined {
+  if (!options?.openrouter) return options
+  return { ...options, openrouter: { ...options.openrouter, session_id: sessionId } }
+}
+
 const RETRY_DELAY_MS = 5_000
 const MAX_OUTPUT_TOKENS = 16_000
 
@@ -320,7 +327,7 @@ function friendlyError(error: unknown): GenerationError {
 
 export class WidgetGenerator {
   private readonly routes: GeneratorRoutes | null
-  /** Primary models that rate-limited us, by label, until the time they are worth trying again. */
+  /** Primary models that rate-limited us (each has its own free-tier quota), by label, until they are worth trying again. */
   private readonly pausedUntil = new Map<string, number>()
 
   constructor(
@@ -328,29 +335,7 @@ export class WidgetGenerator {
     private readonly registry: PackageRegistry,
     routes?: GeneratorRoutes,
   ) {
-    if (routes) {
-      this.routes = routes
-      return
-    }
-
-    const openRouter = config.openRouterKey
-      ? {
-          model: createOpenRouter({ apiKey: config.openRouterKey }).chat(config.openRouterModel),
-          label: `openrouter/${config.openRouterModel}`,
-        }
-      : undefined
-    const google = config.googleKey
-      ? {
-          model: createGoogleGenerativeAI({ apiKey: config.googleKey })(config.googleModel),
-          label: `google/${config.googleModel}`,
-          // Free-tier 429/503s fail fast to OpenRouter instead of costing ~6s of SDK backoff.
-          maxRetries: 0,
-          providerOptions: {
-            google: { thinkingConfig: { thinkingLevel: config.googleThinkingLevel } },
-          },
-        }
-      : undefined
-    this.routes = google && openRouter ? { primary: google, fallback: openRouter } : openRouter ? { primary: openRouter } : null
+    this.routes = routes ?? createRoutes({ google: config.googleKey, openRouter: config.openRouterKey })
   }
 
   /** Runs the agent, and once more from where it left off if the first attempt fails in a recoverable way. */
@@ -373,12 +358,15 @@ export class WidgetGenerator {
   private settings(routes: GeneratorRoutes) {
     const settings = {
       generatorVersion: GENERATOR_VERSION,
-      primary: routes.primary.label,
+      primaries: routes.primaries.map((route) => route.label),
       fallback: routes.fallback?.label ?? null,
-      primaryMaxRetries: routes.primary.maxRetries ?? 2,
-      fallbackMaxRetries: routes.fallback ? (routes.fallback.maxRetries ?? 2) : null,
-      reasoningEffort: config.reasoningEffort,
-      googleThinkingLevel: config.googleThinkingLevel,
+      // Per-model retries and provider options (thinking level, reasoning effort), keyed by label.
+      routeOptions: Object.fromEntries(
+        [...routes.primaries, ...(routes.fallback ? [routes.fallback] : [])].map((route) => [
+          route.label,
+          { maxRetries: route.maxRetries ?? 2, providerOptions: route.providerOptions ?? null },
+        ]),
+      ),
       maxAgentSteps: config.maxAgentSteps,
       maxAgentTokens: config.maxAgentTokens,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -388,22 +376,31 @@ export class WidgetGenerator {
     return { ...settings, settingsHash: shortHash(settings) }
   }
 
-  private async generateWithRetry(input: GenerateInput, sessionId: string, log: GenerationRunLog) {
-    const { primary, fallback } = this.routes!
-    const pausedUntil = this.pausedUntil.get(primary.label) ?? 0
-    if (fallback && pausedUntil > Date.now()) {
-      log.routeSkipped(primary.label, pausedUntil)
-      return this.attempt(input, sessionId, fallback, log)
+  /** The first primary that is not paused, logging the paused ones it skips; the fallback when all are paused. */
+  private chooseRoute(log: GenerationRunLog): ModelRoute {
+    const { primaries, fallback } = this.routes!
+    if (!fallback) return primaries[0]
+    const now = Date.now()
+    for (const route of primaries) {
+      const pausedUntil = this.pausedUntil.get(route.label) ?? 0
+      if (pausedUntil <= now) return route
+      log.routeSkipped(route.label, pausedUntil)
     }
+    return fallback
+  }
+
+  private async generateWithRetry(input: GenerateInput, sessionId: string, log: GenerationRunLog) {
+    const primary = this.chooseRoute(log)
     try {
-      return await this.attempt(input, sessionId, this.routes!.primary, log)
+      return await this.attempt(input, sessionId, primary, log)
     } catch (error) {
       if (input.signal?.aborted) throw error
       if (!(error instanceof GenerationError) || !error.retry) throw error
       input.onProgress?.('Fixing problems')
-      const retryRoute = this.routes!.fallback ?? this.routes!.primary
-      log.retry(error, this.routes!.primary.label, retryRoute.label)
-      if (error.status === 429 && retryRoute === this.routes!.primary) {
+      // One retry only, on the fallback: a failed run never walks the whole chain.
+      const retryRoute = this.routes!.fallback ?? primary
+      log.retry(error, primary.label, retryRoute.label)
+      if (error.status === 429 && retryRoute === primary) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
       }
       const result = await this.attempt(
@@ -416,14 +413,12 @@ export class WidgetGenerator {
         retryRoute,
         log,
       )
-      return retryRoute === this.routes!.primary
-        ? result
-        : { ...result, model: `${this.routes!.primary.label} -> ${retryRoute.label}` }
+      return retryRoute === primary ? result : { ...result, model: `${primary.label} -> ${retryRoute.label}` }
     }
   }
 
   private pauseIfRateLimited(route: ModelRoute, error: unknown, log: GenerationRunLog) {
-    if (route !== this.routes?.primary || !this.routes.fallback) return
+    if (!this.routes?.fallback || !this.routes.primaries.includes(route)) return
     const pauseMs = rateLimitPauseMs(error)
     if (pauseMs === null) return
     const until = Date.now() + pauseMs
@@ -473,9 +468,7 @@ export class WidgetGenerator {
       tools: createTools({ workspace, registry: this.registry, bundler: this.bundler }),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       maxRetries: route.maxRetries,
-      providerOptions:
-        route.providerOptions ??
-        ({ openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } } satisfies ProviderOptions),
+      providerOptions: withSession(route.providerOptions, sessionId),
       stopWhen: [isStepCount(config.maxAgentSteps), finished, overBudget],
       onToolExecutionStart: ({ toolCall }) => {
         firstToolAt ??= Date.now()
