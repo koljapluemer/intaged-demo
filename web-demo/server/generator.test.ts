@@ -7,7 +7,7 @@ import { MockLanguageModelV4 } from 'ai/test'
 import { describe, expect, it, vi } from 'vitest'
 import { Bundler } from './bundler.js'
 import { config } from './config.js'
-import { WidgetGenerator } from './generator.js'
+import { rateLimitPauseMs, WidgetGenerator } from './generator.js'
 import { PackageRegistry } from './packages.js'
 
 const usage = {
@@ -34,6 +34,24 @@ const giveUp: LanguageModelV4GenerateResult = {
   finishReason: { unified: 'stop', raw: undefined },
   usage,
   warnings: [],
+}
+
+function dailyQuotaExceeded() {
+  return new APICallError({
+    message: 'You exceeded your current quota. Generate content requests per day limit exceeded on Free Tier.',
+    url: 'https://example.test',
+    requestBodyValues: {},
+    statusCode: 429,
+    responseBody: JSON.stringify({
+      error: {
+        code: 429,
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' },
+        ],
+      },
+    }),
+  })
 }
 
 async function createGenerator(steps: LanguageModelV4GenerateResult[]) {
@@ -288,6 +306,50 @@ describe('WidgetGenerator', () => {
     } finally {
       config.runLogDir = previous
     }
+  })
+
+  it('pauses a rate-limited primary and sends later runs straight to the fallback', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    output.mockClear()
+    const root = await mkdtemp(path.join(os.tmpdir(), 'theadoc-generator-'))
+    const bundler = new Bundler({
+      bundles: path.join(root, 'bundles'),
+      packages: path.join(root, 'packages'),
+      npmCache: path.join(root, 'npm-cache'),
+    })
+    await bundler.initialize()
+    const primary = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw dailyQuotaExceeded()
+      },
+    })
+    const write = (content: string) => toolStep(['write_files', { files: [{ path: 'main.ts', content }] }])
+    const fallback = new MockLanguageModelV4({ doGenerate: [write('const first = 1'), write('const second = 2')] })
+    const generator = new WidgetGenerator(bundler, new PackageRegistry(), {
+      primary: { model: primary, label: 'google/gemini-test', maxRetries: 0 },
+      fallback: { model: fallback, label: 'openrouter/fallback-test' },
+    })
+
+    const first = await generator.generate({ spec: 'first' })
+    const second = await generator.generate({ spec: 'second' })
+
+    // maxRetries 0: one request, no silent SDK retries; the second run never touches the primary.
+    expect(primary.doGenerateCalls).toHaveLength(1)
+    expect(first.model).toBe('google/gemini-test -> openrouter/fallback-test')
+    expect(second.model).toBe('openrouter/fallback-test')
+    const events = output.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+    expect(events.find((event) => event.event === 'route_paused')).toMatchObject({ model: 'google/gemini-test', pauseMs: 3_600_000 })
+    expect(events.find((event) => event.event === 'route_skipped')).toMatchObject({ model: 'google/gemini-test', runId: second.runId })
+  })
+
+  it('derives the rate-limit pause from the quota error', () => {
+    expect(rateLimitPauseMs(dailyQuotaExceeded())).toBe(3_600_000)
+    const perMinute = (body?: string) =>
+      new APICallError({ message: 'Resource exhausted', url: 'u', requestBodyValues: {}, statusCode: 429, responseBody: body })
+    expect(rateLimitPauseMs(perMinute('{"error":{"details":[{"retryDelay": "37.5s"}]}}'))).toBe(37_500)
+    expect(rateLimitPauseMs(perMinute())).toBe(60_000)
+    expect(rateLimitPauseMs(new APICallError({ message: 'overloaded', url: 'u', requestBodyValues: {}, statusCode: 503 }))).toBeNull()
+    expect(rateLimitPauseMs(new Error('nope'))).toBeNull()
   })
 
   it('does not call the fallback after caller cancellation', async () => {

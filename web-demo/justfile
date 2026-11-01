@@ -23,7 +23,9 @@ logs:
 # Copy the generation run logs into llm-runs/: from the server (THEADOC_SSH in .env) and from local runs (data/runs).
 pull-runs:
     mkdir -p llm-runs/server llm-runs/local
-    if [ -n "${THEADOC_SSH:-}" ]; then rsync -az "$THEADOC_SSH:theadoc/web-demo/data/runs/" llm-runs/server/; else echo "THEADOC_SSH not set: skipping server logs" >&2; fi
+    if [ -z "${THEADOC_SSH:-}" ]; then echo "THEADOC_SSH not set: skipping server logs" >&2; \
+    elif ssh "$THEADOC_SSH" test -d theadoc/web-demo/data/runs; then rsync -az "$THEADOC_SSH:theadoc/web-demo/data/runs/" llm-runs/server/; \
+    else echo "no run logs on the server yet (data/runs appears after the first generation on a version with RUN_LOG_DIR)" >&2; fi
     if [ -d data/runs ]; then rsync -a data/runs/ llm-runs/local/; fi
 
 # Lint and test inside the image build, on the same toolchain that ships.

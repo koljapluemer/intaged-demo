@@ -31,9 +31,15 @@ What makes Gemini free tier worse:
 - **Cost**: OpenRouter's `usage.cost` is exposed as `providerMetadata.openrouter.usage.cost`. It's logged per step as `costUsd` (implemented).
 
 ### Cheap fixes for the Planning problem
-1. `timeout: { totalMs: 300_000, stepMs: N }` on the Gemini route, with N chosen from the observed step-0 `ms`. A stalled Gemini step then falls back after N instead of 300s.
-2. `maxRetries: 0` on the Gemini route, so a 429 or 503 goes straight to OpenRouter.
+1. `timeout: { totalMs: 300_000, stepMs: N }` on the Gemini route, with N chosen from the observed step-0 `ms`. A stalled Gemini step then falls back after N instead of 300s. *Not done yet: needs step-0 timings from runs where Gemini had quota.*
+2. **Done (2026-11-01):** `maxRetries: 0` on the Gemini route, so a 429 or 503 goes straight to OpenRouter.
 3. Optional: stream with `includeThoughts: true` and `firstChunkMs`, to catch a call that never starts producing output. More work, and the UI still shows "Planning" until the tool call is complete.
+
+## Findings from the run log
+
+- **2026-11-01, first server run:** Gemini returned `429 generate_content_free_tier_requests, limit: 20 … per day` (counted against `gemini-3.8-flash` although `gemini-3.7-flash` is configured). That allows only about 5–10 generations per day, since every agent step is a request. With default retries each exhausted run lost 6.7s before falling back. The OpenRouter fallback (`gpt-5.6-terra:nitro`) needed 2 steps, `planningMs` 1.4s, 22.8s total including the Gemini penalty, $0.091, about 2× the list-price estimate. The likely cause is `:nitro` routing to a pricier provider; check OpenRouter's activity view.
+- **Response (done):** `maxRetries: 0` on Gemini, plus a pause after a 429 (`rateLimitPauseMs` in `server/generator.ts`): one hour for a daily quota, otherwise `retryDelay` or 60s. During the pause runs go straight to OpenRouter (`route_skipped` in the log). The pause lives in memory, so a restart clears it, and then costs one fast 429.
+- **Implication:** with 20 requests per day, Gemini can't be the primary for every run. Spend the requests where they count (see the next section, option 1).
 
 ## Which steps suit Gemini free tier
 

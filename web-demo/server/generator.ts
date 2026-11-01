@@ -48,6 +48,8 @@ export interface ModelRoute {
   model: Exclude<LanguageModel, string>
   label: string
   providerOptions?: ProviderOptions
+  /** SDK retries per request (default 2, with 2s/4s backoff). 0 hands failures to the fallback immediately. */
+  maxRetries?: number
 }
 
 export interface GeneratorRoutes {
@@ -142,12 +144,12 @@ class GenerationRunLog {
       attempt,
       model,
       step: step.stepNumber,
-      ms: performance.stepTimeMs,
-      modelMs: performance.responseTimeMs,
+      ms: Math.round(performance.stepTimeMs),
+      modelMs: Math.round(performance.responseTimeMs),
       finishReason: step.finishReason,
       tools: step.toolCalls.map((call) => ({
         name: call.toolName,
-        ms: performance.toolExecutionMs[call.toolCallId] ?? 0,
+        ms: Math.round(performance.toolExecutionMs[call.toolCallId] ?? 0),
         ...toolOutcome(resultByCall.get(call.toolCallId)),
       })),
       ...tokens,
@@ -182,6 +184,14 @@ class GenerationRunLog {
       planningMs,
       ...(error === undefined ? {} : { error: errorMessage(error) }),
     })
+  }
+
+  routePaused(model: string, pauseMs: number, until: number) {
+    this.write('route_paused', { model, pauseMs, until: new Date(until).toISOString() })
+  }
+
+  routeSkipped(model: string, until: number) {
+    this.write('route_skipped', { model, until: new Date(until).toISOString() })
   }
 
   retry(error: GenerationError, from: string, to: string) {
@@ -270,6 +280,23 @@ function userPrompt(input: GenerateInput) {
 
 const rootCause = (error: unknown) => (RetryError.isInstance(error) ? error.lastError : error)
 
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+
+/**
+ * How long to stop sending requests to a model after it rate-limited us, or null if the error is no rate limit.
+ * Gemini's 429 body names the exhausted quota and a RetryInfo.retryDelay. A daily quota (the free tier allows
+ * 20 requests per day) pauses for an hour, after which one cheap request finds out whether it has reset.
+ */
+export function rateLimitPauseMs(error: unknown): number | null {
+  const cause = rootCause(error)
+  if (!APICallError.isInstance(cause) || cause.statusCode !== 429) return null
+  const details = `${cause.message}\n${cause.responseBody ?? ''}`
+  if (/PerDay|per day/i.test(details)) return HOUR_MS
+  const retryDelay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(details)
+  return Math.min(retryDelay ? Math.ceil(Number(retryDelay[1]) * 1000) : MINUTE_MS, HOUR_MS)
+}
+
 function isTimeout(error: unknown) {
   const cause = rootCause(error)
   return cause instanceof Error && (cause.name === 'AbortError' || cause.name === 'TimeoutError')
@@ -293,6 +320,8 @@ function friendlyError(error: unknown): GenerationError {
 
 export class WidgetGenerator {
   private readonly routes: GeneratorRoutes | null
+  /** Primary models that rate-limited us, by label, until the time they are worth trying again. */
+  private readonly pausedUntil = new Map<string, number>()
 
   constructor(
     private readonly bundler: Bundler,
@@ -314,6 +343,8 @@ export class WidgetGenerator {
       ? {
           model: createGoogleGenerativeAI({ apiKey: config.googleKey })(config.googleModel),
           label: `google/${config.googleModel}`,
+          // Free-tier 429/503s fail fast to OpenRouter instead of costing ~6s of SDK backoff.
+          maxRetries: 0,
           providerOptions: {
             google: { thinkingConfig: { thinkingLevel: config.googleThinkingLevel } },
           },
@@ -344,6 +375,8 @@ export class WidgetGenerator {
       generatorVersion: GENERATOR_VERSION,
       primary: routes.primary.label,
       fallback: routes.fallback?.label ?? null,
+      primaryMaxRetries: routes.primary.maxRetries ?? 2,
+      fallbackMaxRetries: routes.fallback ? (routes.fallback.maxRetries ?? 2) : null,
       reasoningEffort: config.reasoningEffort,
       googleThinkingLevel: config.googleThinkingLevel,
       maxAgentSteps: config.maxAgentSteps,
@@ -356,6 +389,12 @@ export class WidgetGenerator {
   }
 
   private async generateWithRetry(input: GenerateInput, sessionId: string, log: GenerationRunLog) {
+    const { primary, fallback } = this.routes!
+    const pausedUntil = this.pausedUntil.get(primary.label) ?? 0
+    if (fallback && pausedUntil > Date.now()) {
+      log.routeSkipped(primary.label, pausedUntil)
+      return this.attempt(input, sessionId, fallback, log)
+    }
     try {
       return await this.attempt(input, sessionId, this.routes!.primary, log)
     } catch (error) {
@@ -381,6 +420,15 @@ export class WidgetGenerator {
         ? result
         : { ...result, model: `${this.routes!.primary.label} -> ${retryRoute.label}` }
     }
+  }
+
+  private pauseIfRateLimited(route: ModelRoute, error: unknown, log: GenerationRunLog) {
+    if (route !== this.routes?.primary || !this.routes.fallback) return
+    const pauseMs = rateLimitPauseMs(error)
+    if (pauseMs === null) return
+    const until = Date.now() + pauseMs
+    this.pausedUntil.set(route.label, until)
+    log.routePaused(route.label, pauseMs, until)
   }
 
   private async attempt(input: GenerateInput, sessionId: string, route: ModelRoute, log: GenerationRunLog): Promise<AttemptResult> {
@@ -424,6 +472,7 @@ export class WidgetGenerator {
       instructions: systemPrompt(this.bundler.preinstalled),
       tools: createTools({ workspace, registry: this.registry, bundler: this.bundler }),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxRetries: route.maxRetries,
       providerOptions:
         route.providerOptions ??
         ({ openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } } satisfies ProviderOptions),
@@ -445,6 +494,7 @@ export class WidgetGenerator {
       })
     } catch (error) {
       failure = error
+      this.pauseIfRateLimited(route, error, log)
     }
     const timedOut = failure !== null && isTimeout(failure) && !input.signal?.aborted
     if (failure !== null && !timedOut) {

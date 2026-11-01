@@ -69,9 +69,10 @@ Every generation writes one JSON line per event, sharing a `runId`, to the conso
 | Event | Fields |
 |---|---|
 | `generation_start` | `specChars`, `specHash` (never the spec text), `continuation`, `previousRunId`, `specChanged`, `reportedErrors`, and the settings fingerprint: `generatorVersion`, `primary`, `fallback`, `reasoningEffort`, `googleThinkingLevel`, step/token/timeout limits, `promptHash`, `settingsHash` |
-| `model_call` | one raw provider request: `attempt`, `model`, `ms`, `ok`, and on failure `status`, `retryable`, `error`. The AI SDK retries failed requests silently (2 retries, 2s/4s backoff); each retry is its own `model_call` |
+| `model_call` | one raw provider request: `attempt`, `model`, `ms`, `ok`, and on failure `status`, `retryable`, `error`. The AI SDK retries failed requests silently (2 retries, 2s/4s backoff; the Gemini route sets `maxRetries: 0` and fails over instead); each retry is its own `model_call` |
 | `generation_step` | one agent step: `ms`, `modelMs`, `finishReason`, tools with outcome, `input`/`cached`/`output`/`reasoning` tokens, `costUsd` (OpenRouter only) |
 | `generation_retry` | the generator retrying a failed attempt, possibly on the fallback model |
+| `route_paused` / `route_skipped` | the primary (Gemini) returned 429, so it is skipped until `until`: one hour for a daily quota, otherwise Gemini's `retryDelay` or 60s. Later runs log `route_skipped` and go straight to the fallback |
 | `generation_attempt_end` | `outcome`, `ms`, `planningMs` (time until the first tool ran, i.e. how long the UI showed "Planning") |
 | `generation_end` | `outcome`, totals (`attempts`, `modelCalls`, `steps`, tokens, `costUsd`), `model` |
 
