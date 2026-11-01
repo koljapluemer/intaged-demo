@@ -43,7 +43,43 @@ async function createGenerator(steps: LanguageModelV4GenerateResult[]) {
   })
   await bundler.initialize()
   const model = new MockLanguageModelV4({ doGenerate: steps })
-  return { generator: new WidgetGenerator(bundler, new PackageRegistry(), model), model }
+  return {
+    generator: new WidgetGenerator(bundler, new PackageRegistry(), {
+      primary: { model, label: 'test/primary' },
+    }),
+    model,
+  }
+}
+
+async function createRoutedGenerator(
+  primarySteps: LanguageModelV4GenerateResult[],
+  fallbackSteps: LanguageModelV4GenerateResult[],
+) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'theadoc-generator-'))
+  const bundler = new Bundler({
+    bundles: path.join(root, 'bundles'),
+    packages: path.join(root, 'packages'),
+    npmCache: path.join(root, 'npm-cache'),
+  })
+  await bundler.initialize()
+  const primary = new MockLanguageModelV4({ doGenerate: primarySteps })
+  const fallback = new MockLanguageModelV4({ doGenerate: fallbackSteps })
+  return {
+    generator: new WidgetGenerator(bundler, new PackageRegistry(), {
+      primary: {
+        model: primary,
+        label: 'google/gemini-test',
+        providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } },
+      },
+      fallback: {
+        model: fallback,
+        label: 'openrouter/fallback-test',
+        providerOptions: { openrouter: { reasoning: { effort: 'low' } } },
+      },
+    }),
+    primary,
+    fallback,
+  }
 }
 
 describe('WidgetGenerator', () => {
@@ -118,5 +154,46 @@ describe('WidgetGenerator', () => {
     const result = await generator.generate({ spec: 'unchanged', previous })
     expect(model.doGenerateCalls).toHaveLength(1)
     expect(result.source).toEqual(previous)
+  })
+
+  it('falls back once with the failed workspace and records both models', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { generator, primary, fallback } = await createRoutedGenerator(
+      [toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const = broken' }] }]), giveUp],
+      [toolStep(['edit_files', { edits: [{ path: 'main.ts', old_text: 'const = broken', new_text: 'const fixed = 1' }] }])],
+    )
+
+    const result = await generator.generate({ spec: 'repair with fallback' })
+
+    expect(primary.doGenerateCalls).toHaveLength(2)
+    expect(fallback.doGenerateCalls).toHaveLength(1)
+    expect(JSON.stringify(fallback.doGenerateCalls[0].prompt)).toContain('main.ts:1')
+    expect(primary.doGenerateCalls[0].providerOptions).toHaveProperty('google')
+    expect(primary.doGenerateCalls[0].providerOptions).not.toHaveProperty('openrouter')
+    expect(fallback.doGenerateCalls[0].providerOptions).toHaveProperty('openrouter')
+    expect(fallback.doGenerateCalls[0].providerOptions).not.toHaveProperty('google')
+    expect(result.source.files['main.ts']).toBe('const fixed = 1')
+    expect(result.model).toBe('google/gemini-test -> openrouter/fallback-test')
+  })
+
+  it('does not call the fallback after a clean primary build', async () => {
+    const { generator, fallback } = await createRoutedGenerator(
+      [toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const done = 1' }] }])],
+      [giveUp],
+    )
+
+    const result = await generator.generate({ spec: 'primary succeeds' })
+
+    expect(fallback.doGenerateCalls).toHaveLength(0)
+    expect(result.model).toBe('google/gemini-test')
+  })
+
+  it('does not call the fallback after caller cancellation', async () => {
+    const { generator, fallback } = await createRoutedGenerator([giveUp], [giveUp])
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(generator.generate({ spec: 'cancelled', signal: controller.signal })).rejects.toThrow()
+    expect(fallback.doGenerateCalls).toHaveLength(0)
   })
 })

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import type { LanguageModelV4CallOptions } from '@ai-sdk/provider'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import {
   APICallError,
@@ -17,6 +19,8 @@ import { GENERATOR_VERSION, systemPrompt } from './prompt.js'
 import { createTools, stageFor, type WidgetTools } from './tools.js'
 import { Workspace } from './workspace.js'
 
+type ProviderOptions = NonNullable<LanguageModelV4CallOptions['providerOptions']>
+
 export interface GenerateInput {
   spec: string
   previous?: WidgetSource
@@ -28,6 +32,18 @@ export interface GenerateInput {
 export interface GenerateResult {
   source: WidgetSource
   bundle: string
+  model: string
+}
+
+export interface ModelRoute {
+  model: LanguageModel
+  label: string
+  providerOptions?: ProviderOptions
+}
+
+export interface GeneratorRoutes {
+  primary: ModelRoute
+  fallback?: ModelRoute
 }
 
 export function hashSpec(spec: string) {
@@ -81,48 +97,75 @@ function friendlyError(error: unknown): GenerationError {
     return new GenerationError('The model is busy. Try again shortly.', 429, { problems: [] })
   }
   if (isTimeout(cause)) {
-    return new GenerationError('Generation timed out before the widget built. Please try again.', 504)
+    return new GenerationError('Generation timed out before the widget built. Please try again.', 504, { problems: [] })
   }
   const message = cause instanceof Error ? cause.message : String(cause)
   return new GenerationError(`The model request failed: ${message}`, 502, { problems: [] })
 }
 
 export class WidgetGenerator {
-  private readonly model: LanguageModel | null
+  private readonly routes: GeneratorRoutes | null
 
   constructor(
     private readonly bundler: Bundler,
     private readonly registry: PackageRegistry,
-    model?: LanguageModel,
+    routes?: GeneratorRoutes,
   ) {
-    this.model =
-      model ?? (config.openRouterKey ? createOpenRouter({ apiKey: config.openRouterKey }).chat(config.model) : null)
+    if (routes) {
+      this.routes = routes
+      return
+    }
+
+    const openRouter = config.openRouterKey
+      ? {
+          model: createOpenRouter({ apiKey: config.openRouterKey }).chat(config.openRouterModel),
+          label: `openrouter/${config.openRouterModel}`,
+        }
+      : undefined
+    const google = config.googleKey
+      ? {
+          model: createGoogleGenerativeAI({ apiKey: config.googleKey })(config.googleModel),
+          label: `google/${config.googleModel}`,
+          providerOptions: {
+            google: { thinkingConfig: { thinkingLevel: config.googleThinkingLevel } },
+          },
+        }
+      : undefined
+    this.routes = google && openRouter ? { primary: google, fallback: openRouter } : openRouter ? { primary: openRouter } : null
   }
 
   /** Runs the agent, and once more from where it left off if the first attempt fails in a recoverable way. */
   async generate(input: GenerateInput): Promise<GenerateResult> {
-    // One OpenRouter session per generation keeps both attempts on the same provider, so its prompt cache hits.
+    if (!this.routes) throw new GenerationError('OPENROUTER_API_KEY is not configured', 503)
+    // One OpenRouter session per generation keeps every OpenRouter step on the same provider for prompt-cache hits.
     const sessionId = randomUUID()
     try {
-      return await this.attempt(input, sessionId)
+      return await this.attempt(input, sessionId, this.routes.primary)
     } catch (error) {
+      if (input.signal?.aborted) throw error
       if (!(error instanceof GenerationError) || !error.retry) throw error
       console.warn(`widget generation attempt failed, retrying: ${error.message}`)
       input.onProgress?.('Fixing problems')
-      if (error.status === 429) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
-      return this.attempt(
+      const retryRoute = this.routes.fallback ?? this.routes.primary
+      if (error.status === 429 && retryRoute === this.routes.primary) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+      }
+      const result = await this.attempt(
         {
           ...input,
           previous: error.retry.source ?? input.previous,
           errors: error.retry.problems.length ? error.retry.problems : input.errors,
         },
         sessionId,
+        retryRoute,
       )
+      return retryRoute === this.routes.primary
+        ? result
+        : { ...result, model: `${this.routes.primary.label} -> ${retryRoute.label}` }
     }
   }
 
-  private async attempt(input: GenerateInput, sessionId: string): Promise<GenerateResult> {
-    if (!this.model) throw new GenerationError('OPENROUTER_API_KEY is not configured', 503)
+  private async attempt(input: GenerateInput, sessionId: string, route: ModelRoute): Promise<GenerateResult> {
     const workspace = new Workspace(input.previous)
     let stage = ''
     const progress = (next: string) => {
@@ -151,6 +194,7 @@ export class WidgetGenerator {
       console.log(
         JSON.stringify({
           event: 'generation_step',
+          model: route.label,
           step: step.stepNumber,
           tools: step.toolCalls.map((call) => call.toolName),
           ms: Date.now() - stepStart,
@@ -164,11 +208,13 @@ export class WidgetGenerator {
       steps.reduce((total, step) => total + (step.usage.totalTokens ?? 0), 0) > config.maxAgentTokens
 
     const agent = new ToolLoopAgent({
-      model: this.model,
+      model: route.model,
       instructions: systemPrompt(this.bundler.preinstalled),
       tools: createTools({ workspace, registry: this.registry, bundler: this.bundler }),
       maxOutputTokens: 16_000,
-      providerOptions: { openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } },
+      providerOptions:
+        route.providerOptions ??
+        ({ openrouter: { reasoning: { effort: config.reasoningEffort }, session_id: sessionId } } satisfies ProviderOptions),
       stopWhen: [isStepCount(config.maxAgentSteps), finished, overBudget],
       onToolExecutionStart: ({ toolCall }) => progress(stageFor(toolCall.toolName)),
       onStepStart: () => {
@@ -179,7 +225,7 @@ export class WidgetGenerator {
 
     const logRun = (outcome: string) =>
       console.log(
-        JSON.stringify({ event: 'generation_run', model: config.model, outcome, ms: Date.now() - runStart, ...totals }),
+        JSON.stringify({ event: 'generation_run', model: route.label, outcome, ms: Date.now() - runStart, ...totals }),
       )
 
     progress('Planning')
@@ -196,7 +242,12 @@ export class WidgetGenerator {
     const timedOut = failure !== null && isTimeout(failure) && !input.signal?.aborted
     if (failure !== null && !timedOut) {
       logRun('error')
-      throw friendlyError(failure)
+      const error = friendlyError(failure)
+      if (input.signal?.aborted || !error.retry) throw error
+      throw new GenerationError(error.message, error.status, {
+        source: workspace.source,
+        problems: workspace.lastDiagnostics.length ? workspace.lastDiagnostics : error.retry.problems,
+      })
     }
 
     // An unfinished run (text reply, step limit, timeout) still counts if its latest change builds cleanly.
@@ -205,7 +256,13 @@ export class WidgetGenerator {
     }
     const bundle = workspace.currentBundle
     logRun(bundle ? (timedOut ? 'timeout_salvaged' : 'ok') : timedOut ? 'timeout' : 'no_build')
-    if (!bundle && timedOut) throw friendlyError(failure)
+    if (!bundle && timedOut) {
+      const error = friendlyError(failure)
+      throw new GenerationError(error.message, error.status, {
+        source: workspace.source,
+        problems: workspace.lastDiagnostics,
+      })
+    }
     if (!bundle) {
       const diagnostics = workspace.lastDiagnostics
       const problems = diagnostics.length ? diagnostics : ['The previous attempt stopped before producing a successful build.']
@@ -215,7 +272,7 @@ export class WidgetGenerator {
         { source: workspace.source, problems },
       )
     }
-    return { source: workspace.source, bundle }
+    return { source: workspace.source, bundle, model: route.label }
   }
 }
 

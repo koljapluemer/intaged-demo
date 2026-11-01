@@ -195,7 +195,7 @@ app.post('/api/widgets/generate', async (request, response) => {
         blockId: input.blockId,
         spec: input.spec,
         specHash: hashSpec(input.spec),
-        model: config.model,
+        model: result.model,
         generatorVersion: GENERATOR_VERSION,
       },
       result.source,

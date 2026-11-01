@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.109",
     "@automerge/automerge": "3.5.0",
     "@automerge/automerge-codemirror": "0.2.0",
     "@automerge/automerge-repo": "2.5.6",

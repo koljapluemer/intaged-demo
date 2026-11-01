@@ -160,6 +160,8 @@ APP_DOMAIN=demo.example.com
 SYNC_DOMAIN=sync.demo.example.com
 VITE_SYNC_URL=wss://sync.demo.example.com
 ACME_EMAIL=you@example.com
+GOOGLE_GENERATIVE_AI_API_KEY=
+GOOGLE_GENERATIVE_AI_MODEL=gemini-3.7-flash
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=openai/gpt-5.6-terra
 EOF
