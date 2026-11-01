@@ -64,9 +64,33 @@ Packages in [`widget-base/package.json`](widget-base/package.json) (d3, Observab
 
 ### Measuring and choosing a model
 
-Every agent step logs one JSON line (`"event":"generation_step"`: model, tools called, duration, input/cached/output/reasoning tokens), and every attempt logs a summary (`"event":"generation_run"`). Read them with `just logs`; paid request costs are in the OpenRouter activity dashboard. Artifacts record the model that succeeded, or both models when OpenRouter repaired a Gemini attempt.
+Every generation writes one JSON line per event, sharing a `runId`, to the console (`just logs`) and to `data/runs/<UTC date>.jsonl` (set by `RUN_LOG_DIR` in `compose.yaml`; the files survive redeploys). Each artifact stores the `runId` that produced it.
 
-What to look for: if `cached` stays near zero on later steps, prompt caching is not working; if `reasoning` dominates `output`, the model thinks more than it writes; if runs take many steps, the time goes to round trips rather than to any single call.
+| Event | Fields |
+|---|---|
+| `generation_start` | `specChars`, `specHash` (never the spec text), `continuation`, `previousRunId`, `specChanged`, `reportedErrors`, and the settings fingerprint: `generatorVersion`, `primary`, `fallback`, `reasoningEffort`, `googleThinkingLevel`, step/token/timeout limits, `promptHash`, `settingsHash` |
+| `model_call` | one raw provider request: `attempt`, `model`, `ms`, `ok`, and on failure `status`, `retryable`, `error`. The AI SDK retries failed requests silently (2 retries, 2s/4s backoff); each retry is its own `model_call` |
+| `generation_step` | one agent step: `ms`, `modelMs`, `finishReason`, tools with outcome, `input`/`cached`/`output`/`reasoning` tokens, `costUsd` (OpenRouter only) |
+| `generation_retry` | the generator retrying a failed attempt, possibly on the fallback model |
+| `generation_attempt_end` | `outcome`, `ms`, `planningMs` (time until the first tool ran, i.e. how long the UI showed "Planning") |
+| `generation_end` | `outcome`, totals (`attempts`, `modelCalls`, `steps`, tokens, `costUsd`), `model` |
+
+`just pull-runs` copies the logs into `llm-runs/` (committed): the server's via rsync over SSH (`THEADOC_SSH=deploy@host` in your local `.env`) into `llm-runs/server/`, and local runs from `data/runs/` into `llm-runs/local/`. Some examples with `jq`:
+
+```sh
+# p50/max time in "Planning" per pipeline configuration
+jq -s '(map(select(.event=="generation_start") | {(.runId): .settingsHash}) | add) as $settings
+  | map(select(.event=="generation_attempt_end" and .attempt==1 and .planningMs!=null) | .settingsHash = $settings[.runId])
+  | group_by(.settingsHash) | map({settingsHash: .[0].settingsHash, runs: length, p50: (map(.planningMs) | sort | .[length/2|floor]), max: (map(.planningMs) | max)})' llm-runs/*/*.jsonl
+
+# failed provider requests by model and status
+jq -s 'map(select(.event=="model_call" and .ok==false)) | group_by([.model, .status]) | map({model: .[0].model, status: .[0].status, n: length})' llm-runs/*/*.jsonl
+
+# runs that needed the fallback, and cost per successful run
+jq -c 'select(.event=="generation_end") | {runId, outcome, reloops, model, costUsd, ms}' llm-runs/*/*.jsonl
+```
+
+What to look for: if `cached` stays near zero on later steps, prompt caching is not working; if `reasoning` dominates `output`, the model thinks more than it writes; if runs take many steps, the time goes to round trips rather than to any single call; several `model_call`s per step mean silent retries. Paid request costs are also in the OpenRouter activity dashboard. Ideas and research for changing the pipeline are collected in [pipeline_ideas.md](pipeline_ideas.md).
 
 Speed settings that need no code change:
 

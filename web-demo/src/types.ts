@@ -19,6 +19,8 @@ export interface WidgetArtifact extends WidgetSource {
   specHash: string
   model: string
   generatorVersion: string
+  /** The generation run that produced this revision (see the run log); missing on older revisions. */
+  runId?: string
   createdAt: string
   bundle: string
 }

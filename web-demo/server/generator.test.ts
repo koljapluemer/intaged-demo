@@ -1,10 +1,12 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { LanguageModelV4GenerateResult } from '@ai-sdk/provider'
+import { APICallError } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
 import { describe, expect, it, vi } from 'vitest'
 import { Bundler } from './bundler.js'
+import { config } from './config.js'
 import { WidgetGenerator } from './generator.js'
 import { PackageRegistry } from './packages.js'
 
@@ -195,13 +197,23 @@ describe('WidgetGenerator', () => {
       [toolStep(['edit_files', { edits: [{ path: 'main.ts', old_text: 'const = broken', new_text: 'const fixed = 1' }] }])],
     )
 
-    await generator.generate({ spec: 'trace this repair' })
+    const result = await generator.generate({ spec: 'trace this repair' })
 
     const events = output.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
-    expect(new Set(events.map((event) => event.runId)).size).toBe(1)
+    expect(new Set(events.map((event) => event.runId))).toEqual(new Set([result.runId]))
     expect(events.map((event) => event.event)).toEqual(
       expect.arrayContaining(['generation_start', 'generation_step', 'generation_retry', 'generation_end']),
     )
+    const start = events.find((event) => event.event === 'generation_start')!
+    expect(start).toMatchObject({ primary: 'google/gemini-test', fallback: 'openrouter/fallback-test' })
+    expect(start.settingsHash).toMatch(/^[0-9a-f]{12}$/)
+    expect(start.specHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(JSON.stringify(start)).not.toContain('trace this repair')
+    // One model_call per provider request: two on the primary, one on the fallback.
+    expect(events.filter((event) => event.event === 'model_call').map((event) => event.attempt)).toEqual([1, 1, 2])
+    for (const attemptEnd of events.filter((event) => event.event === 'generation_attempt_end')) {
+      expect(attemptEnd.planningMs).toEqual(expect.any(Number))
+    }
     expect(events.find((event) => event.event === 'generation_retry')).toMatchObject({
       from: 'google/gemini-test',
       to: 'openrouter/fallback-test',
@@ -213,6 +225,69 @@ describe('WidgetGenerator', () => {
       .flatMap((event) => event.tools as Array<Record<string, unknown>>)
       .find((tool) => tool.outcome === 'error')
     expect(failedTool).toMatchObject({ name: 'write_files', outcome: 'error' })
+  })
+
+  it('logs failed provider requests, including silent SDK retries', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    output.mockClear()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    // Skip the SDK's 2s/4s retry backoff; leave every other timer (e.g. the generation timeout) alone.
+    const realSetTimeout = globalThis.setTimeout
+    const timers = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((handler: () => void, ms?: number) =>
+        realSetTimeout(handler, ms === 2_000 || ms === 4_000 ? 0 : ms)) as typeof setTimeout)
+    const root = await mkdtemp(path.join(os.tmpdir(), 'theadoc-generator-'))
+    const bundler = new Bundler({
+      bundles: path.join(root, 'bundles'),
+      packages: path.join(root, 'packages'),
+      npmCache: path.join(root, 'npm-cache'),
+    })
+    await bundler.initialize()
+    const unavailable = new APICallError({
+      message: 'overloaded',
+      url: 'https://example.test',
+      requestBodyValues: {},
+      statusCode: 503,
+    })
+    const busy = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw unavailable
+      },
+    })
+    const generator = new WidgetGenerator(bundler, new PackageRegistry(), { primary: { model: busy, label: 'test/busy' } })
+
+    await expect(generator.generate({ spec: 'busy' })).rejects.toThrow()
+
+    const calls = output.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((event) => event.event === 'model_call')
+    // Two attempts (first try plus the generator's retry), each with the SDK's 1 + 2 silent retries.
+    expect(calls).toHaveLength(6)
+    expect(calls[0]).toMatchObject({ ok: false, status: 503, retryable: true })
+    timers.mockRestore()
+  })
+
+  it('appends run events to a daily JSONL file when a run log directory is set', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'theadoc-runs-'))
+    const previous = config.runLogDir
+    config.runLogDir = directory
+    try {
+      const { generator } = await createGenerator([toolStep(['write_files', { files: [{ path: 'main.ts', content: 'const ok = 1' }] }])])
+      const result = await generator.generate({ spec: 'persisted' })
+
+      const files = await readdir(directory)
+      expect(files).toEqual([`${new Date().toISOString().slice(0, 10)}.jsonl`])
+      const events = (await readFile(path.join(directory, files[0]), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+      expect(events[0]).toMatchObject({ event: 'generation_start', runId: result.runId })
+      expect(events.at(-1)).toMatchObject({ event: 'generation_end', outcome: 'ok' })
+    } finally {
+      config.runLogDir = previous
+    }
   })
 
   it('does not call the fallback after caller cancellation', async () => {

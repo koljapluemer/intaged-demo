@@ -16,6 +16,7 @@ const artifactSchema = z.object({
   specHash: z.string(),
   model: z.string(),
   generatorVersion: z.string(),
+  runId: z.string().optional(),
   createdAt: z.string(),
   files: z.record(z.string(), z.string()),
   deps: z.record(z.string(), z.string()),

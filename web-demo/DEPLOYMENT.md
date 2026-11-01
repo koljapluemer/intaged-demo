@@ -211,6 +211,8 @@ Logs:
 just logs
 ```
 
+Generation run logs are also appended to `data/runs/<UTC date>.jsonl`. To copy them into your local checkout, set `THEADOC_SSH=deploy@203.0.113.10` in your local `.env` and run `just pull-runs` there (see [README.md](README.md#measuring-and-choosing-a-model)).
+
 Deploy a new version:
 
 ```sh

@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 # Build and (re)start the stack. Same command locally and in production; .env picks the domains.
 up:
     test -f .env || { echo "missing .env: cp .env.example .env" >&2; exit 1; }
@@ -17,6 +19,12 @@ down:
 
 logs:
     docker compose logs -f
+
+# Copy the generation run logs into llm-runs/: from the server (THEADOC_SSH in .env) and from local runs (data/runs).
+pull-runs:
+    mkdir -p llm-runs/server llm-runs/local
+    if [ -n "${THEADOC_SSH:-}" ]; then rsync -az "$THEADOC_SSH:theadoc/web-demo/data/runs/" llm-runs/server/; else echo "THEADOC_SSH not set: skipping server logs" >&2; fi
+    if [ -d data/runs ]; then rsync -a data/runs/ llm-runs/local/; fi
 
 # Lint and test inside the image build, on the same toolchain that ships.
 check:

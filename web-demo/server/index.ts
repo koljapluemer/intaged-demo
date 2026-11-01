@@ -186,6 +186,8 @@ app.post('/api/widgets/generate', async (request, response) => {
         spec: input.spec,
         errors: input.errors,
         previous: previous ? { files: previous.files, deps: previous.deps, network: previous.network } : undefined,
+        previousRunId: previous?.runId,
+        previousSpecHash: previous?.specHash,
         onProgress: setStage,
       }),
     )
@@ -197,6 +199,7 @@ app.post('/api/widgets/generate', async (request, response) => {
         specHash: hashSpec(input.spec),
         model: result.model,
         generatorVersion: GENERATOR_VERSION,
+        runId: result.runId,
       },
       result.source,
       result.bundle,

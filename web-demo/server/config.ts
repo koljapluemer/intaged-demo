@@ -34,6 +34,8 @@ export const config = {
   maxAgentTokens: integer('MAX_AGENT_TOKENS', 400_000),
   reasoningEffort: (process.env.OPENROUTER_REASONING_EFFORT ?? 'low') as 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh',
   generationTimeoutMs: 300_000,
+  /** Directory for the JSONL run log (one file per UTC day); empty logs to the console only. */
+  runLogDir: process.env.RUN_LOG_DIR ?? '',
   installTimeoutMs: 120_000,
   maxBundleBytes: 3_000_000,
   maxPackageUnpackedBytes: 50_000_000,
