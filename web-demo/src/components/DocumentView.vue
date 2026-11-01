@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import type { DocHandle } from '@automerge/automerge-repo'
-import { BookOpen, Check, Copy, Download, Menu, PencilLine } from '@lucide/vue'
+import { BookOpen, Download, Menu, PencilLine, Share2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { titleFromMarkdown } from '../document'
 import { downloadBundle } from '../exportBundle'
 import type { TheadocDocument } from '../types'
-import { shareUrl, t } from '../i18n'
+import { t } from '../i18n'
 import DocumentReader from './DocumentReader.vue'
 import LocaleToggle from './LocaleToggle.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
+import ShareDialog from './ShareDialog.vue'
 
 const props = defineProps<{ handle: DocHandle<TheadocDocument>; documentId: string }>()
 const emit = defineEmits<{ title: [value: string] }>()
 const document = ref(props.handle.doc())
-const copied = ref(false)
+const shareDialog = ref<InstanceType<typeof ShareDialog> | null>(null)
 const exporting = ref(false)
 const exportError = ref<string | null>(null)
 const reading = ref(false)
@@ -25,12 +26,6 @@ const onChange = () => {
 }
 props.handle.on('change', onChange)
 onBeforeUnmount(() => props.handle.off('change', onChange))
-
-async function copyLink() {
-  await navigator.clipboard.writeText(shareUrl())
-  copied.value = true
-  window.setTimeout(() => (copied.value = false), 1500)
-}
 
 async function exportDocument() {
   exporting.value = true
@@ -73,17 +68,10 @@ async function exportDocument() {
       <button
         class="btn btn-ghost btn-sm"
         :title="t('document.copyLink')"
-        @click="copyLink"
+        @click="shareDialog?.open()"
       >
-        <Check
-          v-if="copied"
-          :size="16"
-        />
-        <Copy
-          v-else
-          :size="16"
-        />
-        <span class="hidden sm:inline">{{ copied ? t('document.copied') : t('document.share') }}</span>
+        <Share2 :size="16" />
+        <span class="hidden sm:inline">{{ t('document.share') }}</span>
       </button>
       <button
         class="btn btn-ghost btn-sm"
@@ -103,6 +91,10 @@ async function exportDocument() {
       </button>
       <LocaleToggle class="ml-1" />
     </header>
+    <ShareDialog
+      ref="shareDialog"
+      :document-id="documentId"
+    />
     <div
       v-if="exportError"
       role="alert"

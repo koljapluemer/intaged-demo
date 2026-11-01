@@ -7,7 +7,7 @@ import { splitWidgetBlocks } from '../widgetBlocks'
 import WidgetFrame from './WidgetFrame.vue'
 import { t } from '../i18n'
 
-const props = defineProps<{ document: TheadocDocument }>()
+const props = defineProps<{ document: TheadocDocument; showSpec?: boolean }>()
 // Raw HTML stays disabled: documents are editable by anyone holding the link.
 const markdown = new MarkdownIt({ html: false, linkify: true })
 
@@ -52,6 +52,18 @@ watchEffect(() => {
             class="flex h-24 items-center justify-center rounded-box border-2 border-dashed border-base-300 text-sm opacity-50"
           >
             {{ segment.artifact === undefined ? t('widget.loading') : segment.revision ? t('widget.unavailable') : t('widget.notGenerated') }}
+          </div>
+          <div
+            v-if="showSpec && segment.block.spec"
+            class="mt-2 rounded-box border border-base-300 bg-base-200/50 px-4 py-3 text-sm"
+          >
+            <div class="mb-1 text-xs font-semibold uppercase tracking-wide opacity-50">
+              {{ t('shared.spec') }}
+            </div>
+            <p
+              class="whitespace-pre-wrap opacity-80"
+              v-text="segment.block.spec"
+            />
           </div>
         </div>
       </template>

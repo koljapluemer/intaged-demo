@@ -3,9 +3,10 @@ import type { DocHandle } from '@automerge/automerge-repo'
 import { FilePlus2, FileText, Link2 } from '@lucide/vue'
 import { onMounted, ref, shallowRef } from 'vue'
 import { captureAdminLink, clearAdminToken, readAdminToken } from './admin'
-import { HttpError, registerDocument } from './api'
+import { fetchShared, HttpError, registerDocument, type SharedDocument } from './api'
 import DocumentView from './components/DocumentView.vue'
 import LocaleToggle from './components/LocaleToggle.vue'
+import SharedView from './components/SharedView.vue'
 import { documentIdFromUrl, documentUrlFromId, NEW_DOCUMENT, titleFromMarkdown } from './document'
 import { syncLocale, t, withLocale } from './i18n'
 import { readRecentDocuments, rememberDocument, type RecentDocument } from './recentDocs'
@@ -18,12 +19,51 @@ syncLocale()
 const adminToken = ref(readAdminToken())
 const handle = shallowRef<DocHandle<TheadocDocument> | null>(null)
 const documentId = ref<string | null>(null)
+const shared = shallowRef<{ token: string; data: SharedDocument } | null>(null)
 const recent = ref<RecentDocument[]>(readRecentDocuments())
 const loading = ref(false)
 const error = ref<string | null>(null)
-function routeId() {
-  const match = location.pathname.match(/^\/d\/([^/]+)$/)
-  return match?.[1] ? decodeURIComponent(match[1]) : null
+type Route = { kind: 'document' | 'shared'; id: string }
+
+/** `/d/<id>` opens a document for editing, `/s/<token>` a read-only shared link. */
+function parseRoute(pathname: string): Route | null {
+  const match = pathname.match(/^\/([ds])\/([^/]+)$/)
+  if (!match?.[2]) return null
+  return { kind: match[1] === 's' ? 'shared' : 'document', id: decodeURIComponent(match[2]) }
+}
+
+function openRoute(route: Route, push = true) {
+  return route.kind === 'shared' ? openShared(route.id, push) : openDocument(route.id, push)
+}
+
+function closeDocument() {
+  handle.value = null
+  documentId.value = null
+  shared.value = null
+}
+
+async function openShared(token: string, push = true) {
+  loading.value = true
+  error.value = null
+  try {
+    const data = await fetchShared(token)
+    closeDocument()
+    shared.value = { token, data }
+    if (push) history.pushState({}, '', withLocale(`/s/${encodeURIComponent(token)}`))
+    // Only spec links keep the sidebar, so reader links are not remembered there.
+    if (data.access === 'spec') updateShared(titleFromMarkdown(data.document.markdown))
+  } catch (reason) {
+    closeDocument()
+    error.value = reason instanceof HttpError && reason.status === 404 ? t('shared.notFound') : reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    loading.value = false
+  }
+}
+
+function updateShared(title: string) {
+  if (!shared.value || shared.value.data.access !== 'spec') return
+  rememberDocument({ id: shared.value.token, title, openedAt: Date.now(), shared: true })
+  recent.value = readRecentDocuments()
 }
 
 async function openDocument(id: string, push = true) {
@@ -32,6 +72,7 @@ async function openDocument(id: string, push = true) {
   try {
     const next = await repo.find<TheadocDocument>(documentUrlFromId(id))
     await next.whenReady()
+    shared.value = null
     handle.value = next
     documentId.value = id
     if (push) history.pushState({}, '', withLocale(`/d/${encodeURIComponent(id)}`))
@@ -69,6 +110,7 @@ async function createDocument() {
   } finally {
     loading.value = false
   }
+  shared.value = null
   handle.value = next
   documentId.value = id
   history.pushState({}, '', withLocale(`/d/${encodeURIComponent(id)}`))
@@ -85,31 +127,42 @@ function openLink() {
   const value = window.prompt(t('app.pasteLink'))?.trim()
   if (!value) return
   try {
-    const url = new URL(value, location.origin)
-    const match = url.pathname.match(/^\/d\/([^/]+)$/)
-    void openDocument(match?.[1] ? decodeURIComponent(match[1]) : value)
+    const route = parseRoute(new URL(value, location.origin).pathname)
+    void (route ? openRoute(route) : openDocument(value))
   } catch {
     void openDocument(value)
   }
 }
 
+function openRecent(item: RecentDocument) {
+  void (item.shared ? openShared(item.id) : openDocument(item.id))
+}
+
 window.addEventListener('popstate', () => {
-  const id = routeId()
-  if (id) void openDocument(id, false)
-  else {
-    handle.value = null
-    documentId.value = null
-  }
+  const route = parseRoute(location.pathname)
+  if (route) void openRoute(route, false)
+  else closeDocument()
 })
 
 onMounted(() => {
-  const id = routeId()
-  if (id) void openDocument(id, false)
+  const route = parseRoute(location.pathname)
+  if (route) void openRoute(route, false)
 })
 </script>
 
 <template>
-  <div class="drawer h-screen lg:drawer-open">
+  <!-- Reader links show the rendered document alone, without the sidebar. -->
+  <SharedView
+    v-if="shared?.data.access === 'reader'"
+    :key="shared.token"
+    :token="shared.token"
+    :initial="shared.data"
+    class="h-screen"
+  />
+  <div
+    v-else
+    class="drawer h-screen lg:drawer-open"
+  >
     <input
       id="drawer"
       type="checkbox"
@@ -122,6 +175,13 @@ onMounted(() => {
         :handle="handle"
         :document-id="documentId"
         @title="updateRecent"
+      />
+      <SharedView
+        v-else-if="shared"
+        :key="shared.token"
+        :token="shared.token"
+        :initial="shared.data"
+        @title="updateShared"
       />
       <div
         v-else
@@ -185,8 +245,8 @@ onMounted(() => {
             v-for="item in recent"
             :key="item.id"
             class="flex min-w-0 items-center gap-2"
-            :class="{ 'menu-active': item.id === documentId }"
-            @click="openDocument(item.id)"
+            :class="{ 'menu-active': item.shared ? item.id === shared?.token : item.id === documentId }"
+            @click="openRecent(item)"
           >
             <FileText :size="16" />
             <span class="truncate">{{ item.title }}</span>

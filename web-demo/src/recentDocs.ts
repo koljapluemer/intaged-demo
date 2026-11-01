@@ -1,9 +1,11 @@
 const KEY = 'theadoc:recent-documents'
 
 export interface RecentDocument {
+  /** The document ID, or the share token for documents opened through a read-only link. */
   id: string
   title: string
   openedAt: number
+  shared?: boolean
 }
 
 export function readRecentDocuments(): RecentDocument[] {

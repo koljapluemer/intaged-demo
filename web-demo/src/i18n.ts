@@ -19,10 +19,28 @@ const en = {
     editDocument: 'Edit document',
     readDocument: 'Read document',
     share: 'Share',
-    copied: 'Copied',
-    copyLink: 'Copy edit link',
+    copyLink: 'Share document',
     export: 'Export',
     exportBundle: 'Export portable bundle',
+  },
+  share: {
+    title: 'Share document',
+    edit: 'Can edit',
+    editHint: 'Anyone with the link can edit the document.',
+    spec: 'Read-only with spec',
+    specHint: 'Rendered view, with the description of each interactive element.',
+    reader: 'Read-only',
+    readerHint: 'Rendered view only, without sidebar or descriptions.',
+    link: 'Link',
+    copy: 'Copy link',
+    copied: 'Copied',
+    creating: 'Creating link…',
+    close: 'Close',
+  },
+  shared: {
+    readOnly: 'Read-only',
+    notFound: 'This shared link is invalid or no longer available.',
+    spec: 'Description',
   },
   editor: {
     heading: 'Heading',
@@ -89,10 +107,28 @@ const de: MessageSchema = {
     editDocument: 'Dokument bearbeiten',
     readDocument: 'Dokument lesen',
     share: 'Teilen',
-    copied: 'Kopiert',
-    copyLink: 'Bearbeitungslink kopieren',
+    copyLink: 'Dokument teilen',
     export: 'Exportieren',
     exportBundle: 'Portables Paket exportieren',
+  },
+  share: {
+    title: 'Dokument teilen',
+    edit: 'Darf bearbeiten',
+    editHint: 'Alle mit dem Link können das Dokument bearbeiten.',
+    spec: 'Nur lesen, mit Beschreibung',
+    specHint: 'Gerenderte Ansicht mit der Beschreibung jedes interaktiven Elements.',
+    reader: 'Nur lesen',
+    readerHint: 'Nur die gerenderte Ansicht, ohne Seitenleiste und Beschreibungen.',
+    link: 'Link',
+    copy: 'Link kopieren',
+    copied: 'Kopiert',
+    creating: 'Link wird erstellt…',
+    close: 'Schließen',
+  },
+  shared: {
+    readOnly: 'Nur lesen',
+    notFound: 'Dieser geteilte Link ist ungültig oder nicht mehr verfügbar.',
+    spec: 'Beschreibung',
   },
   editor: {
     heading: 'Überschrift',
@@ -182,9 +218,9 @@ export function withLocale(target: string | URL): string {
   return url.pathname + url.search + url.hash
 }
 
-/** The current page as a link that opens in the current language. */
-export function shareUrl(): string {
-  return new URL(withLocale(location.href), location.origin).href
+/** A link to `target` (the current page by default) that opens in the current language. */
+export function shareUrl(target: string = location.href): string {
+  return new URL(withLocale(target), location.origin).href
 }
 
 /** Keeps the address bar and `<html lang>` in line with the current locale. */

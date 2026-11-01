@@ -12,7 +12,8 @@ export interface WidgetSource {
 export interface WidgetArtifact extends WidgetSource {
   schemaVersion: 2
   id: string
-  documentId: string
+  // Only present in generation results; the public artifact endpoint leaves it out.
+  documentId?: string
   blockId: string
   spec: string
   specHash: string

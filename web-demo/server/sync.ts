@@ -31,6 +31,7 @@ export async function startSyncServer(directory: string, port: number) {
   })
   await new Promise<void>((resolve) => server.listen(port, '0.0.0.0', resolve))
   return {
+    repo,
     close: async () => {
       socketServer.close()
       await repo.shutdown()

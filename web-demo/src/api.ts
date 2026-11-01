@@ -1,5 +1,5 @@
 import { t } from './i18n'
-import type { GenerationJob, WidgetArtifact, WidgetBundle } from './types'
+import type { GenerationJob, TheadocDocument, WidgetArtifact, WidgetBundle } from './types'
 
 export interface GenerateWidgetInput {
   documentId: string
@@ -83,3 +83,24 @@ export const registerDocument = (documentId: string, token: string) =>
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ documentId }),
   })
+
+export type ShareAccess = 'spec' | 'reader'
+
+export interface SharedDocument {
+  access: ShareAccess
+  document: TheadocDocument
+}
+
+export const createShare = (documentId: string, access: ShareAccess) =>
+  request<{ token: string }>('/api/shares', { method: 'POST', body: JSON.stringify({ documentId, access }) }).then(
+    (result) => result.token,
+  )
+
+export const fetchShared = (token: string) => request<SharedDocument>(`/api/shared/${encodeURIComponent(token)}`)
+
+/** Streams updates of a shared document; the browser reconnects on its own. Returns a function that stops it. */
+export function subscribeShared(token: string, onUpdate: (shared: SharedDocument) => void): () => void {
+  const source = new EventSource(`/api/shared/${encodeURIComponent(token)}/events`)
+  source.onmessage = (event) => onUpdate(JSON.parse(event.data) as SharedDocument)
+  return () => source.close()
+}
